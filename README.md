@@ -13,7 +13,7 @@ Someone at a contractor pastes in a customer enquiry. The app drafts a quote fro
 | **Quotes** | Paste an enquiry, get a draft. Review, edit lines, approve or reject. A customer-facing preview to print. Full history. |
 | **Price list** | Search, filter, group by category. Item form with an Odoo-style status bar. Prices are **dated versions**: change a price with a start date and a reason, schedule a rise, see the history. "Not reviewed in 6 months" warnings and bulk "mark reviewed". Archive instead of delete. |
 | **Customers** | Search and tags. Customer form with their quotes, approved value and history. "Save as new customer" from an unmatched quote. Duplicate email or phone detection. Archive and restore. |
-| **CSV import and export** | A wizard for price lists and customers: upload, match columns, preview every row (new / update / unchanged / error), apply in one transaction. Import history with **undo**. Templates. Exports that are safe to open in Excel. |
+| **CSV import and export** | A wizard for price lists and customers: upload, match columns, preview every row (new / update / unchanged / error), apply in one transaction. **House rules** clean messy lists automatically (duplicates, "check ??" notes, "included in", minimum-charge items, +£ extras, categories from names) and show every decision. Import history with **undo**. Templates. Exports that are safe to open in Excel. |
 | **Team and roles** | Owner, Manager, Estimator. Invite by one-time link, change role, deactivate. A company always keeps an owner. |
 | **Onboarding** | A platform admin creates a company and invites its owner. The owner gets a setup checklist (rules, AI key, price list, customers, team, first quote). |
 | **History** | Every create, change, archive and price version is logged **by database triggers** with before and after values. People can add notes. Nobody can edit or fake history. |
@@ -48,6 +48,14 @@ enquiry text
 | The measurements the customer gave, in their units | Rejecting unknown, archived or unpriced items | Pricing a site-visit job after the visit |
 | Whether it needs a site visit or can't be priced | Forcing a site visit above the company's size limit | Which customer a quote belongs to (the AI never matches customers) |
 | Assumptions and questions for the customer | Flagging text aimed at automated systems | Price list, customers, team, settings |
+
+**Cost:**
+- Customer matching is plain code and costs nothing.
+- The rules and price list form a stable prompt prefix, so OpenAI's `prompt_cache_key` and Anthropic's `cache_control` bill repeat enquiries at the cached rate.
+- Price lists over 150 items are narrowed by a cheap first call that picks categories.
+- Each quote shows the tokens it used and how much came from cache.
+
+When an enquiry comes from someone new, the AI also reads their phone, site address and postcode, so **Save as new customer** is pre-filled.
 
 The model's output schema **has no field** for price, discount, VAT or status, so nothing written in an enquiry can change them. The enquiry is passed as untrusted data, and code also checks it separately for instructions aimed at an AI and shows any it finds to the reviewer in red. Enquiry 3 contains exactly this kind of instruction.
 
@@ -88,7 +96,7 @@ Every rule is enforced **in the database** (RLS policies, `has_role()` checks in
   - Security headers (CSP, frame-ancestors none, HSTS, nosniff).
   - No enquiry text or keys in logs.
   - Per-company rate limits on AI calls, imports and invitations.
-- **Tested against the real database** (`tests/rls.test.ts`, 24 tests). Each one signs in as different companies and roles and tries to cross the line: reading, writing, approving, importing, undoing another company's import, reading invitation tokens, changing protected columns, and the platform admin reading tenant data.
+- **Tested against the real database** (`tests/rls.test.ts`, 22 tests). Each one signs in as different companies and roles and tries to cross the line: reading, writing, approving, importing, undoing another company's import, reading invitation tokens, changing protected columns, and the platform admin reading tenant data.
 
 ## The messy data
 
@@ -129,7 +137,7 @@ I sent Dave and Shaz the questions about the price list; these are my defaults u
 
 ```bash
 cp .env.example .env.local      # Supabase URL/keys, KEY_ENCRYPTION_SECRET (openssl rand -base64 32), SEED_PASSWORD
-supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0019)
+supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0020)
 npm install
 npm run seed                    # companies, logins, platform admin, Hollis price list and customers
 npm run dev
@@ -138,7 +146,7 @@ npm run dev
 Then sign in as an owner, open **Settings → AI provider**, and paste an OpenAI or Anthropic key.
 
 **Tests**
-- `npm test`: 54 tests. 30 are unit tests: pricing, units, customer matching, the importer run on Shaz's real files, and CSV safety. The other 24 test RLS against the live database and run when `.env.local` is present.
+- `npm test`: 62 tests. 40 are unit tests: pricing, units, customer matching, the importer run on Shaz's real files (including proof that it reaches the same decisions as the hand-checked import), price-list narrowing, UK dates and CSV safety. The other 22 test RLS against the live database and run when `.env.local` is present.
 - `npm run e2e` (with `npm run dev` running): 30 browser steps covering the price list, customers, CSV import and undo, onboarding, roles and lockout. It uses your installed Chrome and cleans up after itself.
 
 ## What I'd do next
