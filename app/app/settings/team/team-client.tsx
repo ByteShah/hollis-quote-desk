@@ -9,6 +9,7 @@ import { Badge, Button, buttonClass, cn } from "@/components/ui";
 import { Dialog } from "@/components/dialog";
 import { initials } from "@/components/status";
 import { changeRole, inviteMember, revokeInvite, setMemberActive } from "./actions";
+import { formatDate } from "@/lib/dates";
 
 const ROLES = Object.keys(ROLE_LABEL) as Role[];
 
@@ -59,7 +60,7 @@ export function InviteButton() {
             <div className="space-y-4">
               <p className="text-sm text-ink-2">
                 Send this link to <strong className="font-medium">{email}</strong> (email, text or WhatsApp). It works once and expires on{" "}
-                {new Date(result.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}. It won&apos;t be shown again.
+                {formatDate(result.expiresAt, "dayMonth")}. It won&apos;t be shown again.
               </p>
               <CopyLink link={result.link} />
               <div className="flex justify-end">
@@ -173,7 +174,7 @@ export function PendingInviteRow({ invite }: { invite: { id: string; email: stri
       <td className="td">
         <div className="font-medium">{invite.email}</div>
         <div className="text-xs text-muted">
-          {ROLE_LABEL[invite.role]} · invited by {invite.created_by_email ?? "unknown"} · expires {new Date(invite.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+          {ROLE_LABEL[invite.role]} · invited by {invite.created_by_email ?? "unknown"} · expires {formatDate(invite.expires_at, "short")}
         </div>
       </td>
       <td className="td text-right">

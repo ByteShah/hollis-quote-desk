@@ -103,7 +103,7 @@ export function NewQuoteForm({ customer }: { customer: { id: string; name: strin
           />
           <div className="flex flex-wrap items-center gap-3 border-t border-line/70 bg-sunken/40 px-4 py-3">
             <span className={cn("text-xs num", text.length > MAX * 0.9 ? "text-amber-700" : "text-muted")}>
-              {text.length.toLocaleString()} / {MAX.toLocaleString()}
+              {text.length.toLocaleString("en-GB")} / {MAX.toLocaleString("en-GB")}
             </span>
             <span className="hidden text-xs text-muted sm:inline">
               <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> to draft

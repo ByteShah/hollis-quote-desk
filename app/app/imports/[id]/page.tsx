@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { getTenant } from "@/lib/tenant";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { UndoImportButton } from "./undo";
+import { formatDateTime } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Import" };
 
@@ -27,7 +28,7 @@ export default async function ImportPage({ params }: { params: Promise<{ id: str
       <PageHeader
         eyebrow={<Link href="/app/imports" className="hover:text-ink">Import history</Link>}
         title={b.filename}
-        description={`${b.kind === "rates" ? "Price list" : "Customer"} import by ${b.created_by_email ?? "unknown"} on ${new Date(b.created_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}.`}
+        description={`${b.kind === "rates" ? "Price list" : "Customer"} import by ${b.created_by_email ?? "unknown"} on ${formatDateTime(b.created_at)}.`}
         actions={b.status === "applied" && <UndoImportButton id={b.id} />}
       />
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -47,7 +48,7 @@ export default async function ImportPage({ params }: { params: Promise<{ id: str
 
       {b.status === "reverted" && revert && (
         <div className="mb-5 rounded-xl border border-line bg-sunken px-4 py-3 text-sm text-ink-2">
-          <strong className="font-medium text-ink">Undone {new Date(b.reverted_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}.</strong>{" "}
+          <strong className="font-medium text-ink">Undone {formatDateTime(b.reverted_at)}.</strong>{" "}
           {revert.restored} restored, {revert.removed} removed, {revert.archived} archived (already used on quotes).
           {revert.skipped.length > 0 && (
             <div className="mt-2 text-amber-900">

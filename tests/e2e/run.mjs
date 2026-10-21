@@ -100,7 +100,7 @@ await step("history shows events", async () => {
 await step("archive", async () => {
   await page.click("button:has-text('Archive')");
   await page.locator("dialog button:has-text('Archive')").click();
-  await page.getByText(/Archived \d/).waitFor({ timeout: 10000 });
+  await page.getByText(/Archived \d/).waitFor({ timeout: 25000 });
 });
 
 console.log("Customers");

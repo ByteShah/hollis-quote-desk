@@ -6,6 +6,7 @@ import { ROLE_HINT, ROLE_LABEL } from "@/lib/permissions";
 import { Logo } from "@/components/status";
 import { buttonClass } from "@/components/ui";
 import { AcceptForm, JoinButton } from "./forms";
+import { formatDate } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Join your team" };
 export const dynamic = "force-dynamic";
@@ -84,7 +85,7 @@ async function Valid({ token, invite }: { token: string; invite: Extract<Awaited
           </>
         )}
       </div>
-      <p className="mt-6 text-xs text-muted">Expires {new Date(invite.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}.</p>
+      <p className="mt-6 text-xs text-muted">Expires {formatDate(invite.expiresAt, "dayMonth")}.</p>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { getTenant } from "@/lib/tenant";
 import { DEFAULT_MODELS } from "@/lib/ai/provider";
 import { Badge, Card } from "@/components/ui";
 import { AiSettingsForm } from "./form";
+import { formatDate } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "AI provider" };
 
@@ -36,7 +37,7 @@ export default async function SettingsPage() {
                 <div className="font-mono text-[13px]">••••••••{current.key_last4}</div>
               </div>
               <div className="ml-auto text-xs text-muted">
-                Updated {new Date(current.updated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                Updated {formatDate(current.updated_at)}
               </div>
             </div>
           ) : (

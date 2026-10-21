@@ -2,6 +2,7 @@ import { getTenant } from "@/lib/tenant";
 import { formatGBP } from "@/lib/quote/money";
 import { cn } from "./ui";
 import { NoteForm } from "./note-form";
+import { formatDate, formatDateTime } from "@/lib/dates";
 
 // Record history (the "chatter"): every change written by the database
 // triggers, plus notes people add. Rendered on the server and streamed in.
@@ -48,7 +49,7 @@ function show(v: unknown): string {
   if (v == null || v === "") return "empty";
   if (Array.isArray(v)) return v.length ? v.join(", ") : "none";
   if (typeof v === "string" && STATUS[v]) return STATUS[v];
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) return new Date(v).toLocaleDateString("en-GB");
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) return formatDate(v, "numeric");
   if (typeof v === "object") return "updated";
   return String(v);
 }
@@ -67,7 +68,7 @@ function describe(e: Entry): { title: string; lines: string[] } {
       return {
         title: `Price set to ${formatGBP(Number(d.price))}`,
         lines: [
-          `From ${new Date(String(d.effective_from)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`,
+          `From ${formatDate(String(d.effective_from))}`,
           String(d.reason ?? ""),
         ].filter(Boolean),
       };
@@ -133,7 +134,7 @@ export async function History({ entity, entityId, path, canNote = true }: { enti
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <span className="font-medium text-ink">{title}</span>
                   <span className="text-xs text-muted">
-                    {who} · {new Date(e.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
+                    {who} · {formatDateTime(e.at)}
                   </span>
                 </div>
                 {e.note && <p className="mt-1 whitespace-pre-wrap rounded-lg bg-sky-50 px-3 py-2 text-ink-2">{e.note}</p>}

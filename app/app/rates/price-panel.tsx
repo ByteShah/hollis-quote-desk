@@ -9,8 +9,9 @@ import { ukToday, unitLabel } from "@/lib/rates";
 import { Button, cn } from "@/components/ui";
 import { Dialog } from "@/components/dialog";
 import { changePrice, markReviewed, setArchived } from "./actions";
+import { formatDate } from "@/lib/dates";
 
-const longDate = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const longDate = (d: string) => formatDate(d);
 
 export function PricePanel({
   id,

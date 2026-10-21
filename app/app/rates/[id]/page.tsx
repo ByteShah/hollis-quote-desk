@@ -11,6 +11,7 @@ import { RateStatusBadge } from "@/components/status";
 import { History } from "@/components/history";
 import { RateForm, type RateFormValues } from "../rate-form";
 import { ArchiveButton, PricePanel } from "../price-panel";
+import { formatDate } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Price list item" };
 
@@ -100,7 +101,7 @@ export default async function RatePage({ params }: { params: Promise<{ id: strin
       {archived && (
         <div className="mb-5 flex items-start gap-3 rounded-xl border border-line bg-sunken px-4 py-3 text-sm text-ink-2">
           <Lock className="mt-0.5 size-4 shrink-0" />
-          Archived {r.archived_at && new Date(r.archived_at).toLocaleDateString("en-GB")}. It isn&apos;t offered for new quotes. Restore it to edit.
+          Archived {r.archived_at && formatDate(r.archived_at, "numeric")}. It isn&apos;t offered for new quotes. Restore it to edit.
         </div>
       )}
 
@@ -150,7 +151,7 @@ export default async function RatePage({ params }: { params: Promise<{ id: strin
                           <span className="font-normal text-muted"> /{unitLabel(r.unit)}</span>
                         </td>
                         <td className="td whitespace-nowrap">
-                          {new Date(p.effective_from).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                          {formatDate(p.effective_from)}
                           {isCurrent && <Badge tone="success" className="ml-2 text-[11px]">Current</Badge>}
                           {p.effective_from > today && <Badge tone="info" className="ml-2 text-[11px]">Scheduled</Badge>}
                         </td>

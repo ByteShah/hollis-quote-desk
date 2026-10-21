@@ -10,6 +10,7 @@ import { unitLabel } from "@/lib/rates";
 import { Badge, EmptyState, buttonClass, cn } from "@/components/ui";
 import { RateStatusBadge } from "@/components/status";
 import { markReviewed } from "./actions";
+import { formatDate } from "@/lib/dates";
 
 export type RateRow = {
   id: string;
@@ -27,7 +28,7 @@ export type RateRow = {
   last_reviewed_at: string | null;
 };
 
-const shortDate = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const shortDate = (d: string) => formatDate(d);
 
 export function RatesTable({
   rates,

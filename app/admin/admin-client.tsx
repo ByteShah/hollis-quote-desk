@@ -8,6 +8,7 @@ import { Button, buttonClass } from "@/components/ui";
 import { Dialog } from "@/components/dialog";
 import { CopyLink } from "@/app/app/settings/team/team-client";
 import { createCompany, inviteOwner } from "./actions";
+import { formatDate } from "@/lib/dates";
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
@@ -16,7 +17,7 @@ function LinkResult({ company, email, link, expiresAt, onDone }: { company: stri
     <div className="space-y-4">
       <p className="text-sm text-ink-2">
         Send this link to <strong className="font-medium">{email}</strong>. They&apos;ll set a password and become the owner of {company}. It works once and
-        expires on {new Date(expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}. It won&apos;t be shown again.
+        expires on {formatDate(expiresAt, "dayMonth")}. It won&apos;t be shown again.
       </p>
       <CopyLink link={link} />
       <div className="flex justify-end">

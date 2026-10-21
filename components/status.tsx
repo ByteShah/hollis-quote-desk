@@ -1,4 +1,5 @@
 import { Badge, type Tone } from "./ui";
+import { formatDate } from "@/lib/dates";
 
 const OUTCOMES: Record<string, [string, Tone]> = {
   quote: ["Priced draft", "info"],
@@ -65,5 +66,5 @@ export function timeAgo(iso: string): string {
   if (h < 24) return `${h} h ago`;
   const d = Math.round(h / 24);
   if (d < 7) return `${d} d ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return formatDate(iso, "short");
 }

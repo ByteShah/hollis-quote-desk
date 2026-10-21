@@ -2,6 +2,7 @@ import type { Exclusion, QuoteLine } from "@/lib/quote/build";
 import { formatGBP } from "@/lib/quote/money";
 import type { Company } from "@/lib/tenant";
 import { cn } from "@/components/ui";
+import { formatDate } from "@/lib/dates";
 
 // What the customer would receive. Rendered on the server; no client JS.
 // Internal detail (rate codes, AI reasoning, flags) is deliberately left out.
@@ -50,7 +51,7 @@ export function QuotePreview({
           <dt className="text-muted">Reference</dt>
           <dd className="font-mono">Q-{ref}</dd>
           <dt className="text-muted">Date</dt>
-          <dd>{new Date(quote.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</dd>
+          <dd>{formatDate(quote.created_at, "long")}</dd>
         </dl>
       </header>
 
