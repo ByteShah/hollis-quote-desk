@@ -1,120 +1,180 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
-import { Search, SearchX } from "lucide-react";
+import { useState, useTransition } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { CalendarClock, CheckCheck, ChevronRight, Clock3, Loader2, SearchX } from "lucide-react";
+import { toast } from "sonner";
 import { formatGBP } from "@/lib/quote/money";
-import { Badge, EmptyState, cn } from "@/components/ui";
+import { unitLabel } from "@/lib/rates";
+import { Badge, EmptyState, buttonClass, cn } from "@/components/ui";
 import { RateStatusBadge } from "@/components/status";
+import { markReviewed } from "./actions";
 
 export type RateRow = {
+  id: string;
   code: string;
   item: string;
+  category: string | null;
   unit: string;
-  unit_raw: string | null;
   rate_ex_vat: number | null;
+  next_price: number | null;
+  next_price_from: string | null;
   status: string;
   notes: string | null;
-  import_notes: string | null;
   modifiers: { id: string; label: string; amount: number; per: string }[];
+  needs_review: boolean;
+  last_reviewed_at: string | null;
 };
 
-const FILTERS = [
-  { key: "all", label: "All" },
-  { key: "active", label: "In use" },
-  { key: "attention", label: "Needs attention" },
-] as const;
+const shortDate = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-const unitLabel = (u: string) => (u === "m2" ? "m²" : u === "m3" ? "m³" : u);
+export function RatesTable({
+  rates,
+  editable,
+  reviewMonths,
+  emptyHint,
+}: {
+  rates: RateRow[];
+  editable: boolean;
+  reviewMonths: number;
+  emptyHint: "filters" | "none";
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pending, start] = useTransition();
+  const router = useRouter();
 
-export function RatesTable({ rates }: { rates: RateRow[] }) {
-  const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
-  const query = useDeferredValue(q.trim().toLowerCase());
+  if (rates.length === 0) {
+    return emptyHint === "filters" ? (
+      <EmptyState icon={SearchX} title="No items match">Try a different search or filter.</EmptyState>
+    ) : (
+      <EmptyState icon={SearchX} title="Your price list is empty">Add items one by one, or import a CSV.</EmptyState>
+    );
+  }
 
-  const rows = useMemo(
-    () =>
-      rates.filter((r) => {
-        if (filter === "active" && r.status !== "active") return false;
-        if (filter === "attention" && r.status === "active") return false;
-        return !query || `${r.code} ${r.item} ${r.notes ?? ""}`.toLowerCase().includes(query);
-      }),
-    [rates, filter, query],
-  );
+  const groups = new Map<string, RateRow[]>();
+  for (const r of rates) {
+    const k = r.category ?? "Uncategorised";
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const reviewable = rates.filter((r) => r.status === "active");
+  const allSelected = reviewable.length > 0 && reviewable.every((r) => selected.has(r.id));
+
+  const review = () =>
+    start(async () => {
+      const res = await markReviewed([...selected]);
+      if (!res.ok) return void toast.error(res.error);
+      toast.success(`${res.count} price${res.count === 1 ? "" : "s"} marked as reviewed`);
+      setSelected(new Set());
+      router.refresh();
+    });
 
   return (
-    <div className="card overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 border-b border-line/70 px-4 py-3">
-        <div className="relative w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted" aria-hidden />
-          <input className="input pl-9" placeholder="Search code, item or note" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search rates" />
+    <div>
+      {editable && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-line/70 bg-brand-soft/50 px-4 py-2 text-[13px]">
+          <span className="font-medium">{selected.size} selected</span>
+          <button type="button" onClick={review} disabled={pending} className={buttonClass("secondary", "sm")}>
+            {pending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCheck className="size-3.5" />} Mark prices as reviewed
+          </button>
+          <button type="button" onClick={() => setSelected(new Set())} className="text-muted hover:text-ink">Clear</button>
         </div>
-        <div className="flex rounded-lg bg-sunken p-1 ring-1 ring-line">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                "rounded-md px-3 py-1 text-[13px] transition",
-                filter === f.key ? "bg-surface font-medium text-ink shadow-(--shadow-card)" : "text-muted hover:text-ink",
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px]">
+          <thead>
+            <tr>
+              {editable && (
+                <th className="th w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all items in use"
+                    checked={allSelected}
+                    onChange={() => setSelected(allSelected ? new Set() : new Set(reviewable.map((r) => r.id)))}
+                    className="accent-(--color-brand)"
+                  />
+                </th>
               )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <span className="ml-auto text-xs text-muted num">
-          {rows.length} of {rates.length}
-        </span>
-      </div>
-
-      {rows.length === 0 ? (
-        <EmptyState icon={SearchX} title="No matching rates">Try a different search or filter.</EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px]">
-            <thead>
+              <th className="th w-24">Code</th>
+              <th className="th">Item</th>
+              <th className="th w-36 text-right">Price (ex VAT)</th>
+              <th className="th w-32">Status</th>
+              <th className="th w-8" />
+            </tr>
+          </thead>
+          {[...groups.entries()].map(([category, rows]) => (
+            <tbody key={category}>
               <tr>
-                <th className="th w-20">Code</th>
-                <th className="th">Item</th>
-                <th className="th w-24">Unit</th>
-                <th className="th w-28 text-right">Rate</th>
-                <th className="th w-32">Status</th>
-                <th className="th">Notes &amp; import decisions</th>
+                <td colSpan={editable ? 6 : 5} className="border-b border-line/70 bg-canvas/60 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                  {category} <span className="font-normal num">· {rows.length}</span>
+                </td>
               </tr>
-            </thead>
-            <tbody>
               {rows.map((r) => (
-                <tr key={r.code} className={cn("transition hover:bg-sunken/40", r.status === "archived" && "text-muted")}>
-                  <td className="td font-mono text-xs">{r.code}</td>
+                <tr key={r.id} className={cn("group relative transition hover:bg-sunken/40", r.status === "archived" && "text-muted")}>
+                  {editable && (
+                    <td className="td relative z-10">
+                      {r.status === "active" && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${r.code}`}
+                          checked={selected.has(r.id)}
+                          onChange={() => toggle(r.id)}
+                          className="accent-(--color-brand)"
+                        />
+                      )}
+                    </td>
+                  )}
+                  <td className="td font-mono text-xs">
+                    <Link href={`/app/rates/${r.id}`} className="rounded outline-none after:absolute after:inset-0 focus-visible:ring-2 focus-visible:ring-brand" aria-label={`Open ${r.code}`}>
+                      {r.code}
+                    </Link>
+                  </td>
                   <td className="td">
-                    <div className={cn(r.status === "archived" && "line-through decoration-line-strong")}>{r.item}</div>
-                    {r.modifiers.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {r.modifiers.map((m) => (
-                          <Badge key={m.id} tone="brand" className="text-[11px]">
-                            + {m.label} {formatGBP(m.amount)}
-                            {m.per === "unit" ? `/${unitLabel(r.unit)}` : ""}
-                          </Badge>
-                        ))}
+                    <div className={cn("font-medium text-ink", r.status === "archived" && "font-normal text-muted line-through decoration-line-strong")}>{r.item}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      {r.modifiers.map((m) => (
+                        <Badge key={m.id} tone="brand" className="text-[11px]">
+                          + {m.label} {formatGBP(m.amount)}{m.per === "unit" ? `/${unitLabel(r.unit)}` : ""}
+                        </Badge>
+                      ))}
+                      {r.needs_review && (
+                        <Badge tone="warning" className="text-[11px]">
+                          <Clock3 className="size-3" /> Not reviewed in {reviewMonths}+ months
+                        </Badge>
+                      )}
+                      {r.notes && <span className="line-clamp-1 max-w-md text-xs text-muted">{r.notes}</span>}
+                    </div>
+                  </td>
+                  <td className="td text-right">
+                    {r.rate_ex_vat == null ? (
+                      <span className="text-muted">-</span>
+                    ) : (
+                      <span className="font-medium num">
+                        {formatGBP(r.rate_ex_vat)}
+                        <span className="font-normal text-muted"> /{unitLabel(r.unit)}</span>
+                      </span>
+                    )}
+                    {r.next_price != null && r.next_price_from && (
+                      <div className="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-sky-700">
+                        <CalendarClock className="size-3" /> {formatGBP(r.next_price)} from {shortDate(r.next_price_from)}
                       </div>
                     )}
                   </td>
-                  <td className="td">
-                    {unitLabel(r.unit)}
-                    {r.unit_raw && r.unit_raw !== r.unit && <div className="whitespace-nowrap text-[11px] text-muted">was “{r.unit_raw}”</div>}
-                  </td>
-                  <td className="td text-right font-medium num">{r.rate_ex_vat == null ? <span className="text-muted">-</span> : formatGBP(r.rate_ex_vat)}</td>
                   <td className="td"><RateStatusBadge status={r.status} /></td>
-                  <td className="td max-w-md text-xs leading-relaxed">
-                    {r.notes && <div className="text-ink-2">“{r.notes}”</div>}
-                    {r.import_notes && <div className="mt-0.5 text-muted">{r.import_notes}</div>}
-                  </td>
+                  <td className="td text-muted"><ChevronRight className="size-4 transition group-hover:translate-x-0.5 group-hover:text-ink" /></td>
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
-      )}
+          ))}
+        </table>
+      </div>
     </div>
   );
 }

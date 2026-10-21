@@ -28,17 +28,32 @@ type Row = {
   customers: { name: string; company_name: string | null } | null;
 };
 
-export default async function QuotesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
-  const { view: rawView } = await searchParams;
+export default async function QuotesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string; rate?: string; customer?: string }>;
+}) {
+  const { view: rawView, rate, customer } = await searchParams;
   const view: View = rawView && rawView in VIEWS ? (rawView as View) : "all";
   const { supabase, company } = await getTenant();
 
-  const { data } = await supabase
+  // Narrowing filters reached from a price list item or a customer.
+  let scope: { label: string; ids?: string[]; customerId?: string } | null = null;
+  if (rate && /^[A-Z0-9_-]{1,20}$/.test(rate)) {
+    const { data: used } = await supabase.from("quote_lines").select("quote_id").eq("company_id", company.id).eq("rate_code", rate).limit(1000);
+    scope = { label: `Quotes using ${rate}`, ids: [...new Set((used ?? []).map((u) => u.quote_id))] };
+  } else if (customer && /^[0-9a-f-]{36}$/i.test(customer)) {
+    const { data: c } = await supabase.from("customers").select("name").eq("id", customer).maybeSingle();
+    if (c) scope = { label: `Quotes for ${c.name}`, customerId: customer };
+  }
+
+  let query = supabase
     .from("quotes")
     .select("id, summary, outcome, status, total, created_at, flags, customers(name, company_name)")
-    .eq("company_id", company.id)
-    .order("created_at", { ascending: false })
-    .limit(200);
+    .eq("company_id", company.id);
+  if (scope?.ids) query = query.in("id", scope.ids.length ? scope.ids : ["00000000-0000-0000-0000-000000000000"]);
+  if (scope?.customerId) query = query.eq("customer_id", scope.customerId);
+  const { data } = await query.order("created_at", { ascending: false }).limit(200);
   const all = (data ?? []) as unknown as Row[];
 
   const counts = {
@@ -46,6 +61,12 @@ export default async function QuotesPage({ searchParams }: { searchParams: Promi
     site_visit: all.filter((q) => q.outcome === "needs_site_visit" && q.status === "draft").length,
     approved: all.filter((q) => q.status === "approved").length,
     approvedValue: all.filter((q) => q.status === "approved").reduce((s, q) => s + Number(q.total), 0),
+  };
+
+  const keep = scope ? (rate ? `rate=${encodeURIComponent(rate)}` : `customer=${customer}`) : "";
+  const tabHref = (v: View) => {
+    const qs = [v === "all" ? "" : `view=${v}`, keep].filter(Boolean).join("&");
+    return qs ? `/app/quotes?${qs}` : "/app/quotes";
   };
 
   const rows = all.filter((q) => {
@@ -75,12 +96,21 @@ export default async function QuotesPage({ searchParams }: { searchParams: Promi
         <Stat label="Approved value" value={formatGBP(counts.approvedValue)} hint="inc VAT" tone="brand" />
       </div>
 
+      {scope && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className="inline-flex items-center gap-2 rounded-full bg-brand-soft px-3 py-1 text-brand-ink ring-1 ring-brand/15">
+            {scope.label}
+            <Link href="/app/quotes" className="text-brand-ink/70 hover:text-brand-ink" aria-label="Clear filter">✕</Link>
+          </span>
+        </div>
+      )}
+
       <Card bodyClassName="p-0">
         <div className="flex gap-1 overflow-x-auto border-b border-line/70 px-3 pt-2">
           {(Object.keys(VIEWS) as View[]).map((v) => (
             <Link
               key={v}
-              href={v === "all" ? "/app/quotes" : `/app/quotes?view=${v}`}
+              href={tabHref(v)}
               className={cn(
                 "-mb-px shrink-0 border-b-2 px-3 py-2.5 text-[13px] transition",
                 v === view ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-ink",
@@ -124,11 +154,13 @@ export default async function QuotesPage({ searchParams }: { searchParams: Promi
                   return (
                     <tr key={q.id} className="group relative transition hover:bg-sunken/50">
                       <td className="td max-w-[380px]">
-                        <Link href={`/app/quotes/${q.id}`} className="after:absolute after:inset-0" aria-label={`Open quote: ${q.summary ?? "untitled"}`} />
-                        <div className="font-medium text-ink">
+                        <Link
+                          href={`/app/quotes/${q.id}`}
+                          className="block rounded font-medium text-ink outline-none after:absolute after:inset-0 focus-visible:ring-2 focus-visible:ring-brand"
+                        >
                           {q.customers?.name ?? <span className="text-muted">Unknown customer</span>}
                           {q.customers?.company_name && <span className="font-normal text-muted"> · {q.customers.company_name}</span>}
-                        </div>
+                        </Link>
                         <div className="mt-0.5 line-clamp-1 text-[13px] text-muted">{q.summary ?? "Untitled"}</div>
                       </td>
                       <td className="td">
