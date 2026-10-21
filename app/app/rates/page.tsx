@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Price list" };
 export default async function RatesPage() {
   const { supabase, company } = await getTenant();
   const { data } = await supabase
-    .from("rates")
+    .from("rates_current")
     .select("code, item, unit, unit_raw, rate_ex_vat, status, notes, import_notes, modifiers")
     .eq("company_id", company.id)
     .order("code");

@@ -4,6 +4,7 @@ import { systemPrompt, userPrompt } from "@/lib/ai/prompt";
 import { loadAiCredentials } from "@/lib/ai-settings";
 import { matchCustomer, type CustomerRecord } from "@/lib/customers/match";
 import { buildQuote, type Rate } from "./build";
+import { stalePriceFlags } from "./stale";
 import type { Tenant } from "@/lib/tenant";
 
 export const MAX_ENQUIRY_CHARS = 10_000;
@@ -15,7 +16,7 @@ export class QuoteError extends Error {}
  * Enquiry → stored draft quote. Rates and customers are read through the
  * user's RLS-scoped client, so the model only ever sees this company's data.
  */
-export async function createDraftQuote(tenant: Tenant, enquiry: string): Promise<string> {
+export async function createDraftQuote(tenant: Tenant, enquiry: string, customerId?: string | null): Promise<string> {
   const { supabase, company, user } = tenant;
 
   const since = new Date(Date.now() - 60_000).toISOString();
@@ -30,11 +31,16 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string): Promise
   if (!creds) throw new QuoteError("Add your company's AI key in Settings first.");
 
   const [{ data: rateRows, error: rErr }, { data: customerRows, error: cErr }] = await Promise.all([
-    supabase.from("rates").select("code, item, unit, rate_ex_vat, status, notes, modifiers").eq("company_id", company.id),
+    supabase
+      .from("rates_current")
+      .select("code, item, unit, rate_ex_vat, status, notes, modifiers, price_since, last_reviewed_at")
+      .eq("company_id", company.id)
+      .neq("status", "archived"),
     supabase
       .from("customers")
       .select("id, name, company_name, emails, phones, address, notes, invoice_email, payment_terms")
-      .eq("company_id", company.id),
+      .eq("company_id", company.id)
+      .is("archived_at", null),
   ]);
   if (rErr || cErr) throw new QuoteError("Couldn't load your rates and customers.");
 
@@ -44,7 +50,13 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string): Promise
   }));
   const customers = (customerRows ?? []) as CustomerRecord[];
 
-  const matches = matchCustomer(enquiry, customers);
+  // A customer chosen by the user (e.g. "New quote for this customer") wins
+  // over automatic matching; it was already filtered to this company by RLS.
+  const chosen = customerId ? customers.find((c) => c.id === customerId) : undefined;
+  if (customerId && !chosen) throw new QuoteError("That customer couldn't be found.");
+  const matches = chosen
+    ? [{ customer_id: chosen.id, name: chosen.name, confidence: "high" as const, reasons: ["chosen when the quote was started"] }]
+    : matchCustomer(enquiry, customers);
   const best = matches[0]?.confidence === "high" ? customers.find((c) => c.id === matches[0].customer_id) : undefined;
   const customerContext = best
     ? [
@@ -66,6 +78,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string): Promise
   });
 
   const built = buildQuote(draft, rates, company, enquiry);
+  built.flags.push(...stalePriceFlags(built.lines, rateRows ?? [], company.price_review_months));
 
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
@@ -98,15 +111,6 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string): Promise
       .insert(built.lines.map((l, i) => ({ ...l, quote_id: quote.id, company_id: company.id, position: i })));
     if (lErr) throw new QuoteError("Couldn't save the quote lines.");
   }
-
-  await supabase.from("audit_log").insert({
-    company_id: company.id,
-    user_id: user.id,
-    action: "quote.drafted",
-    entity: "quote",
-    entity_id: quote.id,
-    detail: { provider: creds.provider, model: creds.model, outcome: built.outcome, total: built.total },
-  });
 
   return quote.id;
 }

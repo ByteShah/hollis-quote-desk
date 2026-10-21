@@ -35,9 +35,9 @@ describe("rates import", () => {
   });
 
   it("supersedes old and duplicate prices", () => {
-    for (const c of ["BP02", "SB02", "KB02", "EX06", "BP04"]) expect(get(c).status).toBe("superseded");
+    for (const c of ["BP02", "SB02", "KB02", "EX06", "BP04"]) expect(get(c).status).toBe("archived");
     // The minimum charge is applied by code, so the AI must never see it as an item.
-    expect(get("MI01").status).toBe("superseded");
+    expect(get("MI01").status).toBe("archived");
     for (const c of ["BP01", "SB03", "KB01", "EX05"]) expect(get(c).status).toBe("active");
   });
 

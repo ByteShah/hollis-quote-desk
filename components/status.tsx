@@ -12,7 +12,7 @@ const STATUSES: Record<string, [string, Tone]> = {
 };
 const RATE_STATUSES: Record<string, [string, Tone]> = {
   active: ["In use", "success"],
-  superseded: ["Superseded", "neutral"],
+  archived: ["Archived", "neutral"],
   price_on_request: ["No price", "warning"],
   not_offered: ["Not offered", "danger"],
 };

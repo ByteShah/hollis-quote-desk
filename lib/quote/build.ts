@@ -13,7 +13,7 @@ export type Rate = {
   item: string;
   unit: CanonicalUnit;
   rate_ex_vat: number | null;
-  status: "active" | "superseded" | "price_on_request" | "not_offered";
+  status: "active" | "archived" | "price_on_request" | "not_offered";
   notes: string | null;
   modifiers: RateModifier[];
 };

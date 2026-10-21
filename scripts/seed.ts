@@ -1,8 +1,11 @@
 /**
- * Seeds both tenants, their logins, and Hollis's cleaned rates & customers.
- * Idempotent: safe to re-run. Uses the service role (local/CI only, never deployed).
+ * Seeds both tenants, their logins, the platform admin, and Hollis's cleaned
+ * rates & customers. Safe to re-run: price lists and customers are only
+ * loaded into a company that has none, so edits made in the app survive.
+ * Pass --reset to replace them (customers only while the company has no quotes).
+ * Uses the service role (local/CI only, never deployed).
  *
- *   npx tsx scripts/seed.ts
+ *   npx tsx scripts/seed.ts [--reset]
  *
  * Env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SEED_PASSWORD
  */
@@ -13,6 +16,7 @@ import { createClient } from "@supabase/supabase-js";
 import { parseRatesCsv, type ImportedRate } from "../lib/import/rates";
 import { HOLLIS_RATE_DECISIONS } from "../lib/import/hollis-decisions";
 import { dedupeCustomers } from "../lib/import/customers";
+import { categoryFor } from "../lib/import/categories";
 
 config({ path: ".env.local" });
 
@@ -70,30 +74,53 @@ async function ensureUser(email: string): Promise<string> {
   return data.user.id;
 }
 
-async function addMember(email: string, companyId: string, role: "owner" | "staff") {
+const reset = process.argv.includes("--reset");
+
+async function addMember(email: string, companyId: string, role: "owner" | "manager" | "estimator") {
   const userId = await ensureUser(email);
-  const { error } = await db.from("memberships").upsert({ user_id: userId, company_id: companyId, role });
+  const { error } = await db.from("memberships").upsert({ user_id: userId, company_id: companyId, role, email, active: true });
   if (error) throw error;
 }
 
-async function replaceRates(companyId: string, rates: Partial<ImportedRate>[]) {
-  await db.from("rates").delete().eq("company_id", companyId);
-  const { error } = await db.from("rates").insert(
-    rates.map((r) => ({
-      company_id: companyId,
-      code: r.code,
-      item: r.item,
-      unit: r.unit,
-      unit_raw: r.unit_raw ?? r.unit,
-      rate_ex_vat: r.rate_ex_vat,
-      status: r.status,
-      notes: r.notes,
-      modifiers: r.modifiers ?? [],
-      import_notes: r.import_notes?.join(" ") || null,
-      source_row: r.source_row ?? null,
-    })),
-  );
+async function loadRates(companyId: string, rates: Partial<ImportedRate>[]) {
+  const { count } = await db.from("rates").select("id", { count: "exact", head: true }).eq("company_id", companyId);
+  if (count && !reset) return console.log(`  rates: kept ${count} existing items`);
+  if (count) await db.from("rates").delete().eq("company_id", companyId);
+
+  const { data, error } = await db
+    .from("rates")
+    .insert(
+      rates.map((r) => ({
+        company_id: companyId,
+        code: r.code,
+        item: r.item,
+        category: categoryFor(r.code!),
+        unit: r.unit,
+        unit_raw: r.unit_raw ?? r.unit,
+        status: r.status,
+        archived_at: r.status === "archived" ? new Date().toISOString() : null,
+        last_reviewed_at: new Date().toISOString(),
+        notes: r.notes,
+        modifiers: r.modifiers ?? [],
+        import_notes: r.import_notes?.join(" ") || null,
+        source_row: r.source_row ?? null,
+      })),
+    )
+    .select("id, code");
   if (error) throw error;
+  const idByCode = new Map(data.map((d) => [d.code, d.id]));
+  const prices = rates
+    .filter((r) => r.rate_ex_vat != null)
+    .map((r) => ({
+      company_id: companyId,
+      rate_id: idByCode.get(r.code!),
+      price_ex_vat: r.rate_ex_vat,
+      reason: "Imported from the original price list",
+      source: "seed",
+    }));
+  const { error: pErr } = await db.from("rate_prices").insert(prices);
+  if (pErr) throw pErr;
+  console.log(`  rates: loaded ${rates.length} items, ${prices.length} prices`);
 }
 
 async function main() {
@@ -102,28 +129,42 @@ async function main() {
 
   await addMember("dave@hollis.test", hollis, "owner");
   await addMember("shaz@hollis.test", hollis, "owner");
+  await addMember("jake@hollis.test", hollis, "estimator");
   await addMember("gaz@chase.test", chase, "owner");
+
+  // Platform admin: creates companies, has no membership, sees no tenant data.
+  const adminId = await ensureUser("admin@quotedesk.test");
+  await db.from("platform_admins").upsert({ user_id: adminId });
 
   const rates = parseRatesCsv(readFileSync(path.join(root, "brief/02-rates.csv"), "utf8"), {
     vatRate: 0.2,
     decisions: HOLLIS_RATE_DECISIONS,
   });
-  await replaceRates(hollis, rates);
-  await replaceRates(chase, CHASE_RATES);
+  console.log("Hollis Groundworks");
+  await loadRates(hollis, rates);
+  console.log("Chase Landscapes");
+  await loadRates(chase, CHASE_RATES);
 
   const customers = dedupeCustomers(readFileSync(path.join(root, "brief/03-customers.csv"), "utf8"));
   // Quotes reference customers, so only replace them while there are no quotes.
-  const { count } = await db.from("quotes").select("id", { count: "exact", head: true }).eq("company_id", hollis);
-  if (!count) {
+  const [{ count: quoteCount }, { count: customerCount }] = await Promise.all([
+    db.from("quotes").select("id", { count: "exact", head: true }).eq("company_id", hollis),
+    db.from("customers").select("id", { count: "exact", head: true }).eq("company_id", hollis),
+  ]);
+  if (!customerCount || (reset && !quoteCount)) {
     await db.from("customers").delete().eq("company_id", hollis);
-    const { error } = await db.from("customers").insert(customers.map((c) => ({ ...c, company_id: hollis })));
+    const tags = (notes: string | null) => (notes && /landlord/i.test(notes) ? ["landlord"] : notes && /refers work/i.test(notes) ? ["referrer"] : []);
+    const { error } = await db
+      .from("customers")
+      .insert(customers.map((c) => ({ ...c, company_id: hollis, source: "import", tags: tags(c.notes) })));
     if (error) throw error;
+    console.log(`  customers: loaded ${customers.length}`);
   } else {
-    console.log("Hollis has quotes; customers left as they are.");
+    console.log(`  customers: kept ${customerCount} existing`);
   }
 
   writeImportReport(rates, customers);
-  console.log("Seeded: Hollis Groundworks (dave@hollis.test, shaz@hollis.test), Chase Landscapes (gaz@chase.test).");
+  console.log("Logins: dave@ / shaz@ (owners), jake@ (estimator) hollis.test · gaz@chase.test (owner) · admin@quotedesk.test (platform admin)");
 }
 
 function writeImportReport(rates: ImportedRate[], customers: ReturnType<typeof dedupeCustomers>) {

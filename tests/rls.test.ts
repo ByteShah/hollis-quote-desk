@@ -21,6 +21,8 @@ async function signIn(email: string): Promise<SupabaseClient> {
 describe.skipIf(!enabled)("row level security", () => {
   let dave: SupabaseClient;
   let gaz: SupabaseClient;
+  let jake: SupabaseClient;
+  let admin_user: SupabaseClient;
   let admin: SupabaseClient;
   let hollisId: string;
   let chaseId: string;
@@ -28,7 +30,12 @@ describe.skipIf(!enabled)("row level security", () => {
 
   beforeAll(async () => {
     admin = createClient(url!, service!, { auth: { persistSession: false } });
-    [dave, gaz] = await Promise.all([signIn("dave@hollis.test"), signIn("gaz@chase.test")]);
+    [dave, gaz, jake, admin_user] = await Promise.all([
+      signIn("dave@hollis.test"),
+      signIn("gaz@chase.test"),
+      signIn("jake@hollis.test"),
+      signIn("admin@quotedesk.test"),
+    ]);
     const { data } = await admin.from("companies").select("id, slug");
     hollisId = data!.find((c) => c.slug === "hollis")!.id;
     chaseId = data!.find((c) => c.slug === "chase")!.id;
@@ -104,5 +111,71 @@ describe.skipIf(!enabled)("row level security", () => {
 
     const frozen = await dave.from("quotes").update({ total: 1 }).eq("id", q!.id);
     expect(frozen.error).not.toBeNull();
+  });
+
+  // ---- Sprint 6: roles, price versions, history, platform admin ----
+
+  it("Gaz can't read Hollis price versions, current prices, imports or invitations", async () => {
+    for (const table of ["rate_prices", "rates_current", "import_batches", "invitations"]) {
+      const { data } = await gaz.from(table).select("company_id").eq("company_id", hollisId);
+      expect(data ?? [], table).toEqual([]);
+    }
+  });
+
+  it("an estimator can read prices but not change them", async () => {
+    const { data: rate } = await jake.from("rates_current").select("id, version, rate_ex_vat").eq("code", "EX01").single();
+    expect(Number(rate!.rate_ex_vat)).toBe(14.5);
+    const upd = await jake.from("rates").update({ notes: "hack" }).eq("id", rate!.id).select();
+    expect(upd.data ?? []).toEqual([]);
+    const ins = await jake.from("rate_prices").insert({
+      company_id: hollisId, rate_id: rate!.id, price_ex_vat: 1, reason: "x", source: "manual",
+      created_by: (await jake.auth.getUser()).data.user!.id,
+    });
+    expect(ins.error).not.toBeNull();
+  });
+
+  it("an estimator can't approve a quote", async () => {
+    const { data: q } = await jake
+      .from("quotes")
+      .insert({ company_id: hollisId, enquiry_text: "rls test", outcome: "quote", created_by: (await jake.auth.getUser()).data.user!.id })
+      .select("id")
+      .single();
+    created.push(q!.id);
+    const { error } = await jake.from("quotes").update({ status: "approved" }).eq("id", q!.id);
+    expect(error?.message).toMatch(/owner or manager/);
+  });
+
+  it("price versions are append-only, even for owners", async () => {
+    const { data: p } = await dave.from("rate_prices").select("id").eq("company_id", hollisId).limit(1).single();
+    const upd = await dave.from("rate_prices").update({ price_ex_vat: 1 }).eq("id", p!.id);
+    const del = await dave.from("rate_prices").delete().eq("id", p!.id);
+    expect(upd.error).not.toBeNull();
+    expect(del.error).not.toBeNull();
+  });
+
+  it("users can only write notes to the history, not fake events", async () => {
+    const fake = await dave.from("audit_log").insert({
+      company_id: hollisId, user_id: (await dave.auth.getUser()).data.user!.id,
+      action: "quote.approved", entity: "quote", entity_id: hollisId,
+    });
+    expect(fake.error).not.toBeNull();
+  });
+
+  it("a company always keeps an active owner", async () => {
+    const { data: me } = await gaz.auth.getUser();
+    const { error } = await gaz.from("memberships").update({ role: "manager" }).eq("user_id", me.user!.id).eq("company_id", chaseId);
+    expect(error?.message).toMatch(/at least one active owner/);
+  });
+
+  it("the platform admin sees company counts but no company data", async () => {
+    const { data: overview, error } = await admin_user.rpc("admin_company_overview");
+    expect(error).toBeNull();
+    expect(overview!.length).toBeGreaterThanOrEqual(2);
+    for (const table of ["quotes", "rates", "rates_current", "customers", "rate_prices"]) {
+      const { data } = await admin_user.from(table).select("id").limit(1);
+      expect(data ?? [], table).toEqual([]);
+    }
+    const notAdmin = await dave.rpc("admin_company_overview");
+    expect(notAdmin.error).not.toBeNull();
   });
 });

@@ -36,4 +36,14 @@ export async function saveAiCredentials(tenant: Tenant, provider: Provider, mode
       updated_at: new Date().toISOString(),
     });
   if (error) throw new Error("Couldn't save AI settings.");
+  // Written server-side: clients can only add notes to the history.
+  await createAdminClient().from("audit_log").insert({
+    company_id: tenant.company.id,
+    user_id: tenant.user.id,
+    user_email: tenant.user.email,
+    action: "ai_key.updated",
+    entity: "company",
+    entity_id: tenant.company.id,
+    detail: { provider, model, key_last4: apiKey.slice(-4) },
+  });
 }

@@ -84,10 +84,10 @@ export function RatesTable({ rates }: { rates: RateRow[] }) {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.code} className={cn("transition hover:bg-sunken/40", r.status === "superseded" && "text-muted")}>
+                <tr key={r.code} className={cn("transition hover:bg-sunken/40", r.status === "archived" && "text-muted")}>
                   <td className="td font-mono text-xs">{r.code}</td>
                   <td className="td">
-                    <div className={cn(r.status === "superseded" && "line-through decoration-line-strong")}>{r.item}</div>
+                    <div className={cn(r.status === "archived" && "line-through decoration-line-strong")}>{r.item}</div>
                     {r.modifiers.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {r.modifiers.map((m) => (

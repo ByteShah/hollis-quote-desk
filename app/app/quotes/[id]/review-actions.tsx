@@ -15,6 +15,7 @@ export function ReviewActions({
   total,
   customerName,
   hasDanger,
+  canApprove,
 }: {
   quoteId: string;
   status: string;
@@ -22,6 +23,7 @@ export function ReviewActions({
   total: number;
   customerName: string | null;
   hasDanger: boolean;
+  canApprove: boolean;
 }) {
   const [pending, start] = useTransition();
   const [confirming, setConfirming] = useState(false);
@@ -43,7 +45,10 @@ export function ReviewActions({
       <Button variant="secondary" onClick={() => window.print()} title="Print or save as PDF">
         <Printer className="size-4" /> Print
       </Button>
-      {status === "draft" && (
+      {status === "draft" && !canApprove && (
+        <span className="rounded-lg bg-sunken px-3 py-2 text-[13px] text-muted ring-1 ring-line">Waiting for an owner or manager to approve</span>
+      )}
+      {status === "draft" && canApprove && (
         <>
           <Button variant="danger" disabled={pending} onClick={() => run("rejected", "Quote rejected")}>
             <X className="size-4" /> Reject
@@ -53,7 +58,7 @@ export function ReviewActions({
           </Button>
         </>
       )}
-      {status === "rejected" && (
+      {status === "rejected" && canApprove && (
         <Button variant="secondary" disabled={pending} onClick={() => run("draft", "Quote reopened")}>
           <RotateCcw className="size-4" /> Reopen
         </Button>

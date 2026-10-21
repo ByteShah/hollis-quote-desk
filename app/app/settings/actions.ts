@@ -16,7 +16,7 @@ export type SettingsState = { ok: boolean; message: string } | null;
 
 export async function saveAiSettings(_prev: SettingsState, form: FormData): Promise<SettingsState> {
   const tenant = await getTenant();
-  if (tenant.role !== "owner") return { ok: false, message: "Only an account owner can change the AI key." };
+  if (!tenant.can("company.settings")) return { ok: false, message: "Only an owner can change the AI key." };
 
   const parsed = input.safeParse({ provider: form.get("provider"), model: form.get("model"), apiKey: form.get("apiKey") });
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
@@ -34,14 +34,6 @@ export async function saveAiSettings(_prev: SettingsState, form: FormData): Prom
   }
 
   await saveAiCredentials(tenant, provider, model, apiKey);
-  await tenant.supabase.from("audit_log").insert({
-    company_id: tenant.company.id,
-    user_id: tenant.user.id,
-    action: "ai_key.updated",
-    entity: "company",
-    entity_id: tenant.company.id,
-    detail: { provider, model, key_last4: apiKey.slice(-4) },
-  });
   revalidatePath("/app/settings");
   return { ok: true, message: "Key checked and saved." };
 }

@@ -68,8 +68,8 @@ export function parseRatesCsv(
       price = ex;
     }
     if (/\bold\b/i.test(notes)) {
-      status = "superseded";
-      importNotes.push(`Marked superseded (note: "${notes}").`);
+      status = "archived";
+      importNotes.push(`Marked archived as an old price (note: "${notes}").`);
     }
     if (/we don'?t do/i.test(notes)) {
       status = "not_offered";

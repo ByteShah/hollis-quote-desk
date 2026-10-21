@@ -9,7 +9,7 @@ import {
   CircleHelp,
   ClipboardList,
   FileText,
-  History,
+  History as HistoryIcon,
   Info,
   ListChecks,
   Lock,
@@ -25,6 +25,7 @@ import { Badge, Card, Skeleton, cn } from "@/components/ui";
 import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
 import { ReviewActions, CustomerPicker } from "./review-actions";
 import { QuotePreview } from "./preview";
+import { History } from "@/components/history";
 
 // The editor is the heaviest client bundle on the page: split it out so the
 // read-only parts render first.
@@ -57,7 +58,7 @@ export default async function QuotePage({
 }) {
   const [{ id }, { tab }] = await Promise.all([params, searchParams]);
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
-  const { supabase, company } = await getTenant();
+  const { supabase, company, can } = await getTenant();
 
   // RLS: another company's quote id returns no row → 404, same as a bad id.
   const { data: quote } = await supabase.from("quotes").select("*").eq("id", id).maybeSingle();
@@ -65,11 +66,12 @@ export default async function QuotePage({
 
   const [{ data: lineRows }, { data: rates }, { data: customers }] = await Promise.all([
     supabase.from("quote_lines").select("*").eq("quote_id", id).order("position"),
-    supabase.from("rates").select("code, item, unit, rate_ex_vat").eq("company_id", company.id).eq("status", "active").order("code"),
+    supabase.from("rates_current").select("code, item, unit, rate_ex_vat").eq("company_id", company.id).eq("status", "active").order("code"),
     supabase
       .from("customers")
       .select("id, name, company_name, address, notes, invoice_email, payment_terms, emails, phones")
       .eq("company_id", company.id)
+      .is("archived_at", null)
       .order("name"),
   ]);
 
@@ -119,6 +121,7 @@ export default async function QuotePage({
           total={totals.total}
           customerName={customer?.name ?? null}
           hasDanger={flags.some((f) => f.level === "danger")}
+          canApprove={can("quote.approve")}
         />
       </div>
 
@@ -273,7 +276,7 @@ export default async function QuotePage({
                 {meta.outcome_reason && <p className="mt-3 border-t border-line/70 pt-3 text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>}
               </Card>
 
-              <Card title="History" icon={History}>
+              <Card title="History" icon={HistoryIcon}>
                 <Suspense
                   fallback={
                     <div className="space-y-2">
@@ -282,7 +285,7 @@ export default async function QuotePage({
                     </div>
                   }
                 >
-                  <Timeline quoteId={id} />
+                  <History entity="quote" entityId={id} path={`/app/quotes/${id}`} />
                 </Suspense>
               </Card>
             </aside>
@@ -290,41 +293,6 @@ export default async function QuotePage({
         </>
       )}
     </div>
-  );
-}
-
-const ACTION_LABEL: Record<string, string> = {
-  "quote.drafted": "Draft created by AI",
-  "quote.edited": "Lines edited",
-  "quote.approved": "Approved",
-  "quote.rejected": "Rejected",
-  "quote.draft": "Reopened",
-  "quote.customer_set": "Customer changed",
-};
-
-/** Streams in after the rest of the page. */
-async function Timeline({ quoteId }: { quoteId: string }) {
-  const { supabase, user } = await getTenant();
-  const { data } = await supabase.from("audit_log").select("action, at, user_id").eq("entity_id", quoteId).order("at");
-  if (!data?.length) return <p className="text-sm text-muted">No activity yet.</p>;
-  return (
-    <ol className="relative space-y-3 border-l border-line pl-4">
-      {data.map((a, i) => (
-        <li key={i} className="relative text-[13px]">
-          <span
-            className={cn(
-              "absolute -left-[21px] top-1 size-2.5 rounded-full ring-4 ring-surface",
-              a.action === "quote.approved" ? "bg-emerald-500" : a.action === "quote.rejected" ? "bg-red-500" : "bg-line-strong",
-            )}
-          />
-          <div className="text-ink-2">
-            {ACTION_LABEL[a.action] ?? a.action}
-            {a.user_id === user.id && <span className="text-muted"> · you</span>}
-          </div>
-          <div className="text-xs text-muted">{new Date(a.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</div>
-        </li>
-      ))}
-    </ol>
   );
 }
 
