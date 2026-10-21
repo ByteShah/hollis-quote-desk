@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { lookupInvitation } from "@/lib/invites";
 import { ROLE_HINT, ROLE_LABEL } from "@/lib/permissions";
 import { Logo } from "@/components/status";
@@ -45,9 +44,6 @@ async function Valid({ token, invite }: { token: string; invite: Extract<Awaited
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  // Does this email already have an account? (Decides "set a password" vs "sign in".)
-  const { data: list } = await createAdminClient().auth.admin.listUsers({ perPage: 1000 });
-  const exists = (list?.users ?? []).some((u) => u.email?.toLowerCase() === invite.email.toLowerCase());
 
   return (
     <div>
@@ -74,12 +70,18 @@ async function Valid({ token, invite }: { token: string; invite: Extract<Awaited
               You&apos;re signed in as {user.email}. Sign out, then open this link again to accept as {invite.email}.
             </p>
           )
-        ) : exists ? (
-          <Link href={`/login?next=${encodeURIComponent(`/invite/${token}`)}`} className={buttonClass("primary", "md", "w-full")}>
-            Sign in to accept
-          </Link>
         ) : (
-          <AcceptForm token={token} />
+          // We don't reveal whether this email already has an account: new
+          // people set a password; existing users sign in instead.
+          <>
+            <AcceptForm token={token} />
+            <p className="mt-4 text-center text-sm text-muted">
+              Already use Quote Desk?{" "}
+              <Link href={`/login?next=${encodeURIComponent(`/invite/${token}`)}`} className="font-medium text-brand hover:underline">
+                Sign in to accept
+              </Link>
+            </p>
+          </>
         )}
       </div>
       <p className="mt-6 text-xs text-muted">Expires {new Date(invite.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}.</p>

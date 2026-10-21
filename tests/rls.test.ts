@@ -42,7 +42,11 @@ describe.skipIf(!enabled)("row level security", () => {
   });
 
   afterAll(async () => {
-    if (created.length) await admin.from("quotes").delete().in("id", created);
+    if (created.length) {
+      await admin.from("quotes").delete().in("id", created);
+      await admin.from("audit_log").delete().in("entity_id", created);
+    }
+    await admin.from("audit_log").delete().eq("action", "import.reverted").eq("company_id", hollisId);
   });
 
   it("each user only sees their own company", async () => {
@@ -177,5 +181,77 @@ describe.skipIf(!enabled)("row level security", () => {
     }
     const notAdmin = await dave.rpc("admin_company_overview");
     expect(notAdmin.error).not.toBeNull();
+  });
+
+  // ---- Sprints 7-10: imports, invitations, settings, setup status ----
+
+  it("imports can't target another company or be run by an estimator", async () => {
+    const item = [{ action: "create", code: "XX1", item: "x", unit: "m2", status: "active", price: 1 }];
+    const cross = await gaz.rpc("apply_rates_import", { cid: hollisId, file_name: "x.csv", items: item, totals: {} });
+    expect(cross.error?.message).toMatch(/owner or manager/);
+    const est = await jake.rpc("apply_rates_import", { cid: hollisId, file_name: "x.csv", items: item, totals: {} });
+    expect(est.error?.message).toMatch(/owner or manager/);
+    const cust = await gaz.rpc("apply_customers_import", { cid: hollisId, file_name: "x.csv", items: [], totals: {} });
+    expect(cust.error).not.toBeNull();
+  });
+
+  it("an import from one company can't be undone by another", async () => {
+    const { data: batch } = await dave.rpc("apply_rates_import", {
+      cid: hollisId, file_name: "rls-test.csv",
+      items: [{ action: "create", code: "RLSTEST1", item: "RLS test", unit: "m2", status: "active", price: 1 }], totals: {},
+    });
+    expect(batch).toBeTruthy();
+    const other = await gaz.rpc("revert_import", { batch_id: batch });
+    expect(other.error?.message).toMatch(/not found/i);
+    const { data: b } = await admin.from("import_batches").select("rows").eq("id", batch).single();
+    const undone = await dave.rpc("revert_import", { batch_id: batch });
+    expect(undone.error).toBeNull();
+    expect(undone.data.removed).toBe(1);
+    await admin.from("audit_log").delete().in("entity_id", (b!.rows as { record_id: string }[]).map((r) => r.record_id));
+    await admin.from("import_batches").delete().eq("id", batch);
+  });
+
+  it("invitation token hashes are never readable by clients", async () => {
+    const { error } = await dave.from("invitations").select("token_hash").limit(1);
+    expect(error).not.toBeNull();
+    const ok = await dave.from("invitations").select("email").limit(1);
+    expect(ok.error).toBeNull();
+  });
+
+  it("only owners can change company settings", async () => {
+    const est = await jake.from("companies").update({ min_charge: 1 }).eq("id", hollisId).select();
+    expect(est.data ?? []).toEqual([]);
+    const cross = await gaz.from("companies").update({ min_charge: 1 }).eq("id", hollisId).select();
+    expect(cross.data ?? []).toEqual([]);
+    const { data } = await admin.from("companies").select("min_charge").eq("id", hollisId).single();
+    expect(Number(data!.min_charge)).toBe(450);
+  });
+
+  it("setup status is only available to members", async () => {
+    expect((await gaz.rpc("company_setup_status", { cid: hollisId })).error).not.toBeNull();
+    expect((await dave.rpc("company_setup_status", { cid: hollisId })).error).toBeNull();
+  });
+
+  it("two active customers can't share an email address", async () => {
+    const { error } = await dave.from("customers").insert({
+      company_id: hollisId, name: "Dup", emails: ["P.OKAFOR@example.com"], created_by: (await dave.auth.getUser()).data.user!.id,
+    });
+    expect(error?.message).toMatch(/already uses that email/);
+  });
+
+  it("an estimator can't manage the team", async () => {
+    const { data: me } = await dave.auth.getUser();
+    const { data } = await jake.from("memberships").update({ role: "estimator" }).eq("user_id", me.user!.id).select();
+    expect(data ?? []).toEqual([]);
+  });
+
+  it("owners can only change the columns the app edits", async () => {
+    const { data: me } = await gaz.auth.getUser();
+    const steal = await gaz.from("memberships").update({ user_id: (await dave.auth.getUser()).data.user!.id }).eq("user_id", me.user!.id);
+    expect(steal.error).not.toBeNull();
+    const slug = await gaz.from("companies").update({ slug: "hijack" }).eq("id", chaseId);
+    expect(slug.error).not.toBeNull();
+    const rename = await gaz.from("companies").update({ name: "Chase Landscapes" }).eq("id", chaseId).select("name");
+    expect(rename.error).toBeNull();
   });
 });
