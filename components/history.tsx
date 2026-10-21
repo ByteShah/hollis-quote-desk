@@ -71,6 +71,8 @@ function describe(e: Entry): { title: string; lines: string[] } {
           String(d.reason ?? ""),
         ].filter(Boolean),
       };
+    case "rate.price_removed":
+      return { title: `Price ${formatGBP(Number(d.price))} removed`, lines: [String(d.reason ?? "")] };
     case "quote.drafted":
       return { title: "Draft created by AI", lines: [] };
     case "quote.edited":

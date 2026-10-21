@@ -13,6 +13,7 @@ export type ImportedCustomer = {
   notes: string | null;
   invoice_email: string | null;
   payment_terms: string | null;
+  tags: string[];
   merged_from: { row: Record<string, string>; why: string }[];
 };
 
@@ -53,6 +54,19 @@ export function dedupeCustomers(text: string): ImportedCustomer[] {
     skipEmptyLines: true,
     transformHeader: (h) => h.trim().toLowerCase(),
   }).data.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, (v ?? "").trim()])));
+  return dedupeRows(rows);
+}
+
+/**
+ * Merge rows that are clearly the same person or firm. Rows use the keys
+ * name, company, email, phone, address, notes and optionally postcode,
+ * invoice_email, payment_terms, tags (comma-separated).
+ */
+export function dedupeRows(input: Row[]): ImportedCustomer[] {
+  const rows = input.map((r) => ({
+    name: "", company: "", email: "", phone: "", address: "", notes: "",
+    ...Object.fromEntries(Object.entries(r).map(([k, v]) => [k, (v ?? "").trim()])),
+  })) as Row[];
 
   // Union-find over rows.
   const parent = rows.map((_, i) => i);
@@ -114,6 +128,9 @@ export function dedupeCustomers(text: string): ImportedCustomer[] {
     const invoiceRow = members.find((m) => /invoice/i.test(m.notes) && m.email);
     const terms = members.map((m) => m.notes.match(/(\d+)\s*day terms/i)).find(Boolean);
     const address = longest(members.map((m) => m.address));
+    const explicitInvoice = members.map((m) => m.invoice_email).find(Boolean);
+    const explicitTerms = members.map((m) => m.payment_terms).find(Boolean);
+    const tags = [...new Set(members.flatMap((m) => (m.tags ?? "").split(/[,;]/).map((t) => t.trim().toLowerCase()).filter(Boolean)))];
 
     return {
       name,
@@ -121,10 +138,14 @@ export function dedupeCustomers(text: string): ImportedCustomer[] {
       emails: [...new Set(members.map((m) => m.email && normEmail(m.email)).filter(Boolean) as string[])],
       phones: [...new Set(members.map((m) => m.phone).filter(Boolean))],
       address,
-      postcode: members.map((m) => m.address && extractPostcode(m.address)).find(Boolean) ?? null,
+      postcode:
+        members.map((m) => m.postcode?.toUpperCase()).find(Boolean) ??
+        members.map((m) => m.address && extractPostcode(m.address)).find(Boolean) ??
+        null,
       notes: notes.join("; ") || null,
-      invoice_email: invoiceRow ? normEmail(invoiceRow.email) : null,
-      payment_terms: terms ? `${terms[1]} days` : null,
+      invoice_email: explicitInvoice ? normEmail(explicitInvoice) : invoiceRow ? normEmail(invoiceRow.email) : null,
+      payment_terms: explicitTerms || (terms ? `${terms[1]} days` : null),
+      tags,
       merged_from: idx.map((i) => ({ row: rows[i], why: why[i] || "primary record" })),
     };
   });

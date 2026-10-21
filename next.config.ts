@@ -17,6 +17,8 @@ const csp = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // CSV imports send the file (max 2 MB) to a server action.
+  experimental: { serverActions: { bodySizeLimit: "3mb" } },
   async headers() {
     return [
       {
