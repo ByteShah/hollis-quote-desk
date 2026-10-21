@@ -16,12 +16,13 @@ import {
   MapPin,
   ShieldAlert,
   TriangleAlert,
+  UserPlus,
   UserRound,
 } from "lucide-react";
 import { getTenant } from "@/lib/tenant";
 import type { Exclusion, Flag, QuoteLine } from "@/lib/quote/build";
 import type { CustomerMatch } from "@/lib/customers/match";
-import { Badge, Card, Skeleton, cn } from "@/components/ui";
+import { Badge, Card, LinkButton, Skeleton, cn } from "@/components/ui";
 import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
 import { ReviewActions, CustomerPicker } from "./review-actions";
 import { QuotePreview } from "./preview";
@@ -209,7 +210,7 @@ export default async function QuotePage({
                 {customer ? (
                   <div className="space-y-3 text-sm">
                     <div>
-                      <div className="font-medium">{customer.name}</div>
+                      <Link href={`/app/customers/${customer.id}`} className="font-medium hover:underline">{customer.name}</Link>
                       {customer.company_name && <div className="text-ink-2">{customer.company_name}</div>}
                       {customer.address && <div className="text-[13px] text-muted">{customer.address}</div>}
                     </div>
@@ -236,7 +237,14 @@ export default async function QuotePage({
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-muted">Not matched to anyone in your customer list.</p>
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted">Not matched to anyone in your customer list.</p>
+                    {editable && (
+                      <LinkButton href={`/app/customers/new?from_quote=${id}`} variant="secondary" size="sm">
+                        <UserPlus className="size-3.5" /> Save as new customer
+                      </LinkButton>
+                    )}
+                  </div>
                 )}
                 {matches.length > 0 && (
                   <ul className="mt-3 space-y-1.5 border-t border-line/70 pt-3">

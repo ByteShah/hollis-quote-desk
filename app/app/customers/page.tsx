@@ -1,100 +1,158 @@
+import Link from "next/link";
 import type { Metadata } from "next";
-import { Building2, GitMerge, Mail, MapPin, Phone, Users } from "lucide-react";
+import { Download, Plus, Upload, Users } from "lucide-react";
 import { getTenant } from "@/lib/tenant";
-import { Badge, EmptyState, PageHeader } from "@/components/ui";
-import { initials } from "@/components/status";
+import { formatGBP } from "@/lib/quote/money";
+import { Badge, EmptyState, LinkButton, PageHeader } from "@/components/ui";
+import { FilterTabs, Pager, SearchBox, SelectFilter } from "@/components/list-controls";
+import { initials, timeAgo } from "@/components/status";
 
 export const metadata: Metadata = { title: "Customers" };
 
-export default async function CustomersPage() {
-  const { supabase, company } = await getTenant();
-  const { data: customers } = await supabase
-    .from("customers")
-    .select("id, name, company_name, emails, phones, address, notes, invoice_email, payment_terms, merged_from")
-    .eq("company_id", company.id)
-    .order("name");
+const PAGE_SIZE = 50;
 
-  const merged = customers?.filter((c) => (c.merged_from as unknown[]).length > 1).length ?? 0;
+export default async function CustomersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; view?: string; tag?: string; page?: string }>;
+}) {
+  const sp = await searchParams;
+  const view = sp.view === "archived" ? "archived" : "active";
+  const page = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
+  const q = (sp.q ?? "").trim().toLowerCase().slice(0, 100);
+  const { supabase, company, can } = await getTenant();
+
+  let query = supabase
+    .from("customers")
+    .select("id, name, company_name, emails, phones, address, tags, payment_terms, archived_at", { count: "exact" })
+    .eq("company_id", company.id);
+  query = view === "archived" ? query.not("archived_at", "is", null) : query.is("archived_at", null);
+  if (q) query = query.ilike("search_text", `%${q.replace(/[%_\\]/g, " ")}%`);
+  if (sp.tag) query = query.contains("tags", [sp.tag.toLowerCase().slice(0, 30)]);
+
+  const [{ data, count }, { data: tagRows }, { count: archivedCount }] = await Promise.all([
+    query.order("name").range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),
+    supabase.from("customers").select("tags").eq("company_id", company.id).is("archived_at", null),
+    supabase.from("customers").select("id", { count: "exact", head: true }).eq("company_id", company.id).not("archived_at", "is", null),
+  ]);
+  const customers = data ?? [];
+  const tags = [...new Set((tagRows ?? []).flatMap((r) => r.tags as string[]))].sort();
+
+  // Quote totals for the customers on this page only.
+  const ids = customers.map((c) => c.id);
+  const { data: quotes } = ids.length
+    ? await supabase.from("quotes").select("customer_id, status, total, created_at").in("customer_id", ids)
+    : { data: [] };
+  const stats = new Map<string, { count: number; approved: number; last: string | null }>();
+  for (const qr of quotes ?? []) {
+    const s = stats.get(qr.customer_id!) ?? { count: 0, approved: 0, last: null };
+    s.count += 1;
+    if (qr.status === "approved") s.approved += Number(qr.total);
+    if (!s.last || qr.created_at > s.last) s.last = qr.created_at;
+    stats.set(qr.customer_id!, s);
+  }
 
   return (
     <div className="animate-rise">
       <PageHeader
         title="Customers"
-        description={
-          customers?.length
-            ? `${customers.length} customers. Duplicates in the imported list were merged (${merged}); the original rows are kept on each record.`
-            : undefined
+        description="Everyone who's asked for a quote. Matched automatically to new enquiries by email, phone or name and address."
+        actions={
+          <>
+            {can("data.export") && (
+              // A file download, not a page.
+              // eslint-disable-next-line @next/next/no-html-link-for-pages
+              <a href="/app/customers/export" className="inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm text-ink-2 hover:bg-sunken hover:text-ink">
+                <Download className="size-4" /> Export
+              </a>
+            )}
+            {can("data.import") && (
+              <LinkButton href="/app/customers/import" variant="secondary">
+                <Upload className="size-4" /> Import
+              </LinkButton>
+            )}
+            <LinkButton href="/app/customers/new">
+              <Plus className="size-4" /> New customer
+            </LinkButton>
+          </>
         }
       />
-      {!customers?.length ? (
-        <div className="card">
-          <EmptyState icon={Users} title="No customers yet" />
+
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line/70 px-4 py-3">
+          <SearchBox placeholder="Search name, email, phone, address" />
+          <FilterTabs
+            name="view"
+            current={view}
+            options={[
+              { value: "active", label: "Active" },
+              { value: "archived", label: "Archived", count: archivedCount ?? 0 },
+            ]}
+          />
+          {tags.length > 0 && <SelectFilter name="tag" label="All tags" options={tags} current={sp.tag ?? ""} />}
         </div>
-      ) : (
-        <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {customers.map((c) => {
-            const rows = (c.merged_from as { why: string }[]).length;
-            return (
-              <li key={c.id} className="card flex flex-col p-5">
-                <div className="flex items-start gap-3">
-                  <div className="grid size-10 shrink-0 place-items-center rounded-full bg-brand-soft text-sm font-semibold text-brand-ink">
-                    {initials(c.name)}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{c.name}</div>
-                    {c.company_name && (
-                      <div className="flex items-center gap-1 truncate text-[13px] text-muted">
-                        <Building2 className="size-3.5 shrink-0" aria-hidden /> {c.company_name}
-                      </div>
-                    )}
-                  </div>
-                  {rows > 1 && (
-                    <Badge tone="info" className="ml-auto">
-                      <GitMerge className="size-3" aria-hidden /> {rows} merged
-                    </Badge>
-                  )}
-                </div>
 
-                <ul className="mt-4 space-y-1.5 text-[13px] text-ink-2">
-                  {c.emails.map((e: string) => (
-                    <li key={e} className="flex items-center gap-2 truncate">
-                      <Mail className="size-3.5 shrink-0 text-muted" aria-hidden /> {e}
-                    </li>
-                  ))}
-                  {c.phones.map((p: string) => (
-                    <li key={p} className="flex items-center gap-2">
-                      <Phone className="size-3.5 shrink-0 text-muted" aria-hidden /> {p}
-                    </li>
-                  ))}
-                  {c.address && (
-                    <li className="flex items-start gap-2">
-                      <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden /> {c.address}
-                    </li>
-                  )}
-                </ul>
-
-                {(c.notes || c.payment_terms || c.invoice_email) && (
-                  <div className="mt-auto pt-4">
-                    <div className="space-y-1 rounded-lg bg-sunken/70 px-3 py-2 text-xs text-ink-2">
-                      {c.notes && <div>{c.notes}</div>}
-                      {c.payment_terms && (
-                        <div>
-                          <span className="text-muted">Terms:</span> {c.payment_terms}
+        {customers.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title={q || sp.tag || view === "archived" ? "No customers match" : "No customers yet"}
+            action={!q && view === "active" && <LinkButton href="/app/customers/new" variant="secondary"><Plus className="size-4" /> Add a customer</LinkButton>}
+          >
+            {q || sp.tag ? "Try a different search or filter." : view === "active" ? "Add them one by one, import a CSV, or save them from a quote." : null}
+          </EmptyState>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px]">
+              <thead>
+                <tr>
+                  <th className="th">Customer</th>
+                  <th className="th">Contact</th>
+                  <th className="th">Tags</th>
+                  <th className="th text-right">Quotes</th>
+                  <th className="th text-right">Approved</th>
+                  <th className="th text-right">Last quote</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customers.map((c) => {
+                  const s = stats.get(c.id);
+                  return (
+                    <tr key={c.id} className="group relative transition hover:bg-sunken/40">
+                      <td className="td">
+                        <div className="flex items-center gap-3">
+                          <div className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink">{initials(c.name)}</div>
+                          <div className="min-w-0">
+                            <Link href={`/app/customers/${c.id}`} className="block truncate rounded font-medium text-ink outline-none after:absolute after:inset-0 focus-visible:ring-2 focus-visible:ring-brand">
+                              {c.name}
+                            </Link>
+                            {c.company_name && <div className="truncate text-[13px] text-muted">{c.company_name}</div>}
+                          </div>
                         </div>
-                      )}
-                      {c.invoice_email && (
-                        <div className="truncate">
-                          <span className="text-muted">Invoices to:</span> {c.invoice_email}
+                      </td>
+                      <td className="td text-[13px] text-ink-2">
+                        <div className="max-w-[16rem] truncate">{(c.emails as string[])[0] ?? <span className="text-muted">No email</span>}</div>
+                        <div className="text-muted">{(c.phones as string[])[0]}</div>
+                      </td>
+                      <td className="td">
+                        <div className="flex flex-wrap gap-1">
+                          {(c.tags as string[]).map((t) => (
+                            <Badge key={t} tone="brand" className="text-[11px] capitalize">{t}</Badge>
+                          ))}
+                          {c.payment_terms && <Badge className="text-[11px]">{c.payment_terms}</Badge>}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                      </td>
+                      <td className="td text-right num">{s?.count ?? 0}</td>
+                      <td className="td text-right num">{s?.approved ? formatGBP(s.approved) : <span className="text-muted">-</span>}</td>
+                      <td className="td whitespace-nowrap text-right text-[13px] text-muted">{s?.last ? timeAgo(s.last) : "-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <Pager page={page} pageSize={PAGE_SIZE} total={count ?? 0} />
+      </div>
     </div>
   );
 }

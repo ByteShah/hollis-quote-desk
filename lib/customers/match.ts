@@ -65,3 +65,10 @@ export function matchCustomer(enquiry: string, customers: CustomerRecord[]): Cus
   }
   return results.sort((a, b) => (a.confidence === b.confidence ? b.reasons.length - a.reasons.length : a.confidence === "high" ? -1 : 1));
 }
+
+/** "Patience Okafor <p@x.com>" → "Patience Okafor". Used to pre-fill a new customer. */
+export function senderName(enquiry: string): string | null {
+  const from = enquiry.match(/^from:\s*(.+)$/im)?.[1] ?? "";
+  const name = from.replace(/<[^>]*>/, "").replace(/["']/g, "").trim();
+  return name && !name.includes("@") ? name.slice(0, 200) : null;
+}

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { CheckCircle2, CircleSlash, MapPin, ShieldAlert } from "lucide-react";
+import { getTenant } from "@/lib/tenant";
 import { Card, PageHeader } from "@/components/ui";
 import { NewQuoteForm } from "./form";
 
@@ -12,7 +13,14 @@ const RULES = [
   { icon: ShieldAlert, tone: "text-ink-2", text: "Instructions hidden in an email (discounts, “approve this”) are ignored and flagged." },
 ];
 
-export default function NewQuotePage() {
+export default async function NewQuotePage({ searchParams }: { searchParams: Promise<{ customer?: string }> }) {
+  const { customer: customerId } = await searchParams;
+  let customer: { id: string; name: string } | null = null;
+  if (customerId && /^[0-9a-f-]{36}$/i.test(customerId)) {
+    const { supabase } = await getTenant();
+    const { data } = await supabase.from("customers").select("id, name").eq("id", customerId).is("archived_at", null).maybeSingle();
+    customer = data;
+  }
   return (
     <div className="animate-rise">
       <PageHeader
@@ -21,7 +29,7 @@ export default function NewQuotePage() {
         description="Paste the customer's email or website enquiry. You'll get a draft to check; nothing is sent to the customer."
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
-        <NewQuoteForm />
+        <NewQuoteForm customer={customer} />
         <Card title="How the draft is made" className="h-fit">
           <ul className="space-y-4">
             {RULES.map(({ icon: Icon, tone, text }) => (

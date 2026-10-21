@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { Check, ClipboardPaste, Loader2, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { Check, ClipboardPaste, Loader2, Sparkles, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { Kbd, buttonClass, cn } from "@/components/ui";
 import { generateQuote } from "../actions";
@@ -14,7 +15,7 @@ const STEPS = [
   "Working out quantities, minimum charge and VAT",
 ];
 
-export function NewQuoteForm() {
+export function NewQuoteForm({ customer }: { customer: { id: string; name: string } | null }) {
   const [error, action, pending] = useActionState(generateQuote, null);
   const [text, setText] = useState("");
   const [step, setStep] = useState(0);
@@ -41,6 +42,15 @@ export function NewQuoteForm() {
 
   return (
     <form action={action} className="card overflow-hidden">
+      {customer && <input type="hidden" name="customer_id" value={customer.id} />}
+      {customer && !pending && (
+        <div className="flex items-center gap-2 border-b border-line/70 bg-brand-soft/40 px-4 py-2 text-[13px]">
+          <UserRound className="size-3.5 text-brand" /> Quote for <strong className="font-medium">{customer.name}</strong>
+          <Link href="/app/quotes/new" className="ml-auto rounded p-0.5 text-muted hover:text-ink" aria-label="Don't link to this customer">
+            <X className="size-3.5" />
+          </Link>
+        </div>
+      )}
       {pending ? (
         <div className="px-6 py-10 sm:px-10" aria-live="polite">
           <div className="mb-6 flex items-center gap-3">
