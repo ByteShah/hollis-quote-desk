@@ -2,7 +2,7 @@
 
 Someone at a contractor pastes in a customer enquiry. The app drafts a quote from **that company's own price list**, a person checks and edits it, and nothing is approved without them clicking Approve. Built for Hollis Groundworks; works for any number of companies, each with its own data and its own AI key.
 
-- **Live app:** _TBC_
+- **Live app:** https://hollis-quote-desk.vercel.app
 - **Logins:** sent in the email (one for Hollis Groundworks, one for Chase Landscapes, the made-up second firm)
 - **Stack:** Next.js 15 (App Router, TypeScript) · Supabase (Postgres, Auth, RLS) · Vercel · OpenAI or Anthropic (per company)
 
