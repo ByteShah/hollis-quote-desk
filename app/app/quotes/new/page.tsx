@@ -1,30 +1,38 @@
-"use client";
+import type { Metadata } from "next";
+import { CheckCircle2, CircleSlash, MapPin, ShieldAlert } from "lucide-react";
+import { Card, PageHeader } from "@/components/ui";
+import { NewQuoteForm } from "./form";
 
-import { useActionState } from "react";
-import { generateQuote } from "../actions";
+export const metadata: Metadata = { title: "New quote" };
+
+const RULES = [
+  { icon: CheckCircle2, tone: "text-emerald-700", text: "Prices come only from your price list. The AI picks items and measurements; the app does the maths." },
+  { icon: MapPin, tone: "text-amber-700", text: "Car parks, commercial sites and big areas get “site visit needed” instead of a price." },
+  { icon: CircleSlash, tone: "text-red-700", text: "Work you don't do, or have no price for, is listed separately rather than guessed." },
+  { icon: ShieldAlert, tone: "text-ink-2", text: "Instructions hidden in an email (discounts, “approve this”) are ignored and flagged." },
+];
 
 export default function NewQuotePage() {
-  const [error, action, pending] = useActionState(generateQuote, null);
   return (
-    <form action={action} className="max-w-3xl space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">New quote</h1>
-        <p className="text-sm text-stone-500">
-          Paste the customer&apos;s email or website enquiry, headers included if you have them. You&apos;ll get a draft to
-          check; nothing is sent to the customer.
-        </p>
-      </div>
-      <textarea
-        name="enquiry"
-        className="input min-h-[22rem] font-mono text-xs"
-        placeholder={"From: …\nSubject: …\n\nHi, could you quote for…"}
-        maxLength={10000}
-        required
+    <div className="animate-rise">
+      <PageHeader
+        eyebrow="Quotes"
+        title="New quote"
+        description="Paste the customer's email or website enquiry. You'll get a draft to check; nothing is sent to the customer."
       />
-      {error && <p className="text-sm text-red-700">{error}</p>}
-      <button className="btn-primary" disabled={pending}>
-        {pending ? "Drafting… (up to a minute)" : "Draft quote"}
-      </button>
-    </form>
+      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+        <NewQuoteForm />
+        <Card title="How the draft is made" className="h-fit">
+          <ul className="space-y-4">
+            {RULES.map(({ icon: Icon, tone, text }) => (
+              <li key={text} className="flex gap-3 text-[13px] leading-relaxed text-ink-2">
+                <Icon className={`mt-0.5 size-4 shrink-0 ${tone}`} aria-hidden />
+                {text}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      </div>
+    </div>
   );
 }

@@ -135,7 +135,8 @@ export function buildQuote(
         unitRate += mod.amount;
         extras.push(mod.label);
       } else {
-        lines.push(systemLine(null, `${mod.label} (${rate.code})`, 1, "each", mod.amount, "ai", l.reasoning));
+        // Customer-facing description; the rate it belongs to goes in the internal note.
+        lines.push(systemLine(null, mod.label, 1, "each", mod.amount, "ai", `Extra for ${rate.code}. ${l.reasoning}`));
       }
     }
 

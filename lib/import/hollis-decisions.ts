@@ -32,4 +32,8 @@ export const HOLLIS_RATE_DECISIONS: Record<string, RateDecision> = {
   },
   TM03: { status: "price_on_request", reason: "Resin price changes; 'ask Dave'." },
   KB04: { status: "not_offered", reason: "Dropped kerbs need a council-approved contractor; refer to the council." },
+  MI01: {
+    status: "superseded",
+    reason: "The £450 minimum is applied automatically by the app as a top-up line, so it's never offered to the AI as an item (that would double-charge).",
+  },
 };

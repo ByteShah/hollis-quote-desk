@@ -1,11 +1,22 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2, Plus, Trash2, Undo2 } from "lucide-react";
+import { toast } from "sonner";
 import { MIN_CHARGE_CODE, priceLines, type QuoteLine } from "@/lib/quote/build";
 import { formatGBP } from "@/lib/quote/money";
+import { Badge, Button, cn } from "@/components/ui";
 import { saveLines } from "../actions";
 
 type RateOption = { code: string; item: string; unit: string; rate_ex_vat: number };
+
+const unitLabel = (u: string) => (u === "m2" ? "m²" : u === "m3" ? "m³" : u);
+const SOURCE: Record<string, { label: string; tone: "info" | "brand" | "neutral" }> = {
+  ai: { label: "AI", tone: "info" },
+  human: { label: "Edited", tone: "brand" },
+  system: { label: "Auto", tone: "neutral" },
+};
 
 export function LinesEditor({
   quoteId,
@@ -24,109 +35,144 @@ export function LinesEditor({
 }) {
   const [lines, setLines] = useState(initial);
   const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [addCode, setAddCode] = useState("");
+  const router = useRouter();
 
-  // Preview only; the server recalculates on save.
-  const preview = dirty ? priceLines(lines, pricing) : { lines, ...saved };
+  // Warn before leaving with unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const h = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [dirty]);
 
+  // Live preview only; the server recalculates everything on save.
+  const view = dirty ? priceLines(lines, pricing) : { lines, ...saved };
+
+  // Edits index into view.lines (what's on screen). The minimum-charge line is
+  // always last and never editable, and priceLines drops and re-adds it.
   const update = (i: number, patch: Partial<QuoteLine>) => {
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch, source: "human" } : l)));
+    setLines(view.lines.map((l, j) => (j === i ? { ...l, ...patch, source: "human" as const } : l)));
     setDirty(true);
   };
   const remove = (i: number) => {
-    setLines((ls) => ls.filter((_, j) => j !== i));
+    setLines(view.lines.filter((_, j) => j !== i));
     setDirty(true);
   };
   const add = () => {
     const rate = rates.find((r) => r.code === addCode);
     const line: QuoteLine = rate
       ? { rate_code: rate.code, description: rate.item, qty: 1, unit: rate.unit, unit_rate: rate.rate_ex_vat, line_total: 0, source: "human", note: null }
-      : { rate_code: null, description: "Custom item", qty: 1, unit: "each", unit_rate: 0, line_total: 0, source: "human", note: null };
-    setLines((ls) => [...ls.filter((l) => l.rate_code !== MIN_CHARGE_CODE), line]);
+      : { rate_code: null, description: "", qty: 1, unit: "each", unit_rate: 0, line_total: 0, source: "human", note: null };
+    setLines([...view.lines.filter((l) => l.rate_code !== MIN_CHARGE_CODE), line]);
+    setAddCode("");
     setDirty(true);
+  };
+  const reset = () => {
+    setLines(initial);
+    setDirty(false);
   };
   const save = () =>
     start(async () => {
-      setError(null);
       const res = await saveLines(quoteId, lines);
-      if (res.error) setError(res.error);
-      else {
-        setLines(priceLines(lines, pricing).lines);
-        setDirty(false);
-      }
+      if (res.error) return void toast.error(res.error);
+      setLines(priceLines(lines, pricing).lines);
+      setDirty(false);
+      toast.success("Changes saved");
+      router.refresh();
     });
 
-  const shown = dirty ? preview.lines : lines;
-
   return (
-    <div className="space-y-3">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px]">
+    <div>
+      <div className="-mx-5 -mt-5 overflow-x-auto">
+        <table className="w-full min-w-[600px]">
           <thead>
             <tr>
               <th className="th">Item</th>
-              <th className="th w-24 text-right">Qty</th>
-              <th className="th w-16">Unit</th>
+              <th className="th w-32 text-right">Qty</th>
               <th className="th w-28 text-right">Rate</th>
-              <th className="th w-28 text-right">Total</th>
-              {editable && <th className="th w-8" />}
+              <th className="th w-28 text-right">Amount</th>
+              {editable && <th className="th w-10" />}
             </tr>
           </thead>
           <tbody>
-            {shown.map((l, i) => {
+            {view.lines.map((l, i) => {
               const system = l.rate_code === MIN_CHARGE_CODE;
               const canEdit = editable && !system;
+              const src = SOURCE[l.source] ?? SOURCE.system;
               return (
-                <tr key={i} className={system ? "bg-stone-50" : ""}>
+                <tr key={i} className={cn("group", system && "bg-sunken/50")}>
                   <td className="td">
                     {canEdit ? (
-                      <input className="input py-1" value={l.description} onChange={(e) => update(i, { description: e.target.value })} />
+                      <textarea
+                        rows={1}
+                        className="input h-auto min-h-9 resize-none py-1.5 leading-snug [field-sizing:content]"
+                        value={l.description}
+                        placeholder="Describe the item"
+                        aria-label="Description"
+                        onChange={(e) => update(i, { description: e.target.value })}
+                      />
                     ) : (
-                      l.description
+                      <div className={cn("text-sm", system && "text-ink-2")}>{l.description}</div>
                     )}
-                    <div className="mt-0.5 text-xs text-stone-400">
-                      {l.rate_code && !system && <span className="font-mono">{l.rate_code} · </span>}
-                      {l.source === "ai" ? "AI" : l.source === "human" ? "edited" : "auto"}
-                      {l.note && ` · ${l.note}`}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                      <Badge tone={src.tone} className="text-[11px]">{src.label}</Badge>
+                      {l.rate_code && !system && <span className="font-mono text-[11px]">{l.rate_code}</span>}
+                      {l.note && <span className="line-clamp-2 max-w-md" title={l.note}>{l.note}</span>}
                     </div>
                   </td>
                   <td className="td text-right">
                     {canEdit ? (
-                      <input
-                        className="input py-1 text-right"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={l.qty}
-                        onChange={(e) => update(i, { qty: Number(e.target.value) })}
-                      />
+                      <div className="relative">
+                        <input
+                          className="input h-9 pr-11 text-right num"
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          min="0"
+                          aria-label={`Quantity in ${unitLabel(l.unit)}`}
+                          value={l.qty}
+                          onChange={(e) => update(i, { qty: Number(e.target.value) })}
+                        />
+                        <span className="pointer-events-none absolute right-2.5 top-2 text-[13px] text-muted">{unitLabel(l.unit)}</span>
+                      </div>
                     ) : (
-                      l.qty
+                      <span className="num whitespace-nowrap">
+                        {l.qty} <span className="text-muted">{unitLabel(l.unit)}</span>
+                      </span>
                     )}
                   </td>
-                  <td className="td">{l.unit}</td>
                   <td className="td text-right">
                     {canEdit ? (
-                      <input
-                        className="input py-1 text-right"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={l.unit_rate}
-                        onChange={(e) => update(i, { unit_rate: Number(e.target.value) })}
-                      />
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-2.5 top-2 text-sm text-muted">£</span>
+                        <input
+                          className="input h-9 pl-6 text-right num"
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          min="0"
+                          aria-label="Rate"
+                          value={l.unit_rate}
+                          onChange={(e) => update(i, { unit_rate: Number(e.target.value) })}
+                        />
+                      </div>
                     ) : (
-                      formatGBP(l.unit_rate)
+                      <span className="num">{formatGBP(l.unit_rate)}</span>
                     )}
                   </td>
-                  <td className="td text-right tabular-nums">{formatGBP(l.line_total)}</td>
+                  <td className="td text-right font-medium num">{formatGBP(l.line_total)}</td>
                   {editable && (
                     <td className="td">
                       {!system && (
-                        <button type="button" onClick={() => remove(i)} className="text-stone-400 hover:text-red-600" aria-label="Remove line">
-                          ✕
+                        <button
+                          type="button"
+                          onClick={() => remove(i)}
+                          className="rounded-md p-1.5 text-muted opacity-60 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
+                          aria-label="Remove line"
+                        >
+                          <Trash2 className="size-4" />
                         </button>
                       )}
                     </td>
@@ -134,45 +180,66 @@ export function LinesEditor({
                 </tr>
               );
             })}
-            {shown.length === 0 && (
+            {view.lines.length === 0 && (
               <tr>
-                <td className="td text-stone-500" colSpan={6}>No priced lines.</td>
+                <td className="td py-8 text-center text-muted" colSpan={editable ? 5 : 4}>
+                  No priced lines{editable ? ". Add one from your price list below." : "."}
+                </td>
               </tr>
             )}
           </tbody>
-          <tfoot className="text-sm">
-            <tr>
-              <td colSpan={4} className="px-3 pt-3 text-right">Subtotal (ex VAT)</td>
-              <td className="px-3 pt-3 text-right tabular-nums">{formatGBP(preview.subtotal)}</td>
-            </tr>
-            <tr>
-              <td colSpan={4} className="px-3 text-right">VAT {pricing.vat_rate * 100}%</td>
-              <td className="px-3 text-right tabular-nums">{formatGBP(preview.vat)}</td>
-            </tr>
-            <tr className="font-semibold">
-              <td colSpan={4} className="px-3 text-right">Total</td>
-              <td className="px-3 text-right tabular-nums">{formatGBP(preview.total)}</td>
-            </tr>
-          </tfoot>
         </table>
       </div>
 
-      {editable && (
-        <div className="no-print flex flex-wrap items-center gap-2 border-t border-stone-100 pt-3">
-          <select className="input w-auto max-w-xs py-1.5" value={addCode} onChange={(e) => setAddCode(e.target.value)}>
-            <option value="">Custom line…</option>
-            {rates.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.code}: {r.item} ({formatGBP(r.rate_ex_vat)}/{r.unit})
-              </option>
-            ))}
-          </select>
-          <button type="button" className="btn-secondary" onClick={add}>Add line</button>
-          <div className="ml-auto flex items-center gap-3">
-            {dirty && <span className="text-xs text-amber-700">Unsaved changes</span>}
-            {error && <span className="text-xs text-red-700">{error}</span>}
-            <button type="button" className="btn-primary" disabled={!dirty || pending} onClick={save}>
-              {pending ? "Saving…" : "Save changes"}
+      <div className="mt-4 flex flex-col-reverse gap-5 sm:flex-row sm:items-start sm:justify-between">
+        {editable ? (
+          <div className="flex w-full max-w-md gap-2">
+            <select className="input" value={addCode} onChange={(e) => setAddCode(e.target.value)} aria-label="Item to add">
+              <option value="">Custom line</option>
+              {rates.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.code} · {r.item} ({formatGBP(r.rate_ex_vat)}/{unitLabel(r.unit)})
+                </option>
+              ))}
+            </select>
+            <Button type="button" variant="secondary" onClick={add}>
+              <Plus className="size-4" /> Add
+            </Button>
+          </div>
+        ) : (
+          <div />
+        )}
+        <dl className="w-full space-y-1.5 text-sm sm:w-64">
+          <div className="flex justify-between">
+            <dt className="text-muted">Subtotal</dt>
+            <dd className="num">{formatGBP(view.subtotal)}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-muted">VAT {pricing.vat_rate * 100}%</dt>
+            <dd className="num">{formatGBP(view.vat)}</dd>
+          </div>
+          <div className="flex justify-between border-t border-line pt-2 text-base font-semibold">
+            <dt>Total</dt>
+            <dd className="num">{formatGBP(view.total)}</dd>
+          </div>
+        </dl>
+      </div>
+
+      {editable && dirty && (
+        <div className="sticky bottom-4 z-10 mt-5 flex items-center gap-3 rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-white shadow-(--shadow-pop) animate-rise">
+          <span className="size-2 rounded-full bg-amber-400" />
+          Unsaved changes. Totals shown are a preview.
+          <div className="ml-auto flex gap-2">
+            <button type="button" onClick={reset} disabled={pending} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-white/80 hover:bg-white/10 hover:text-white">
+              <Undo2 className="size-4" /> Discard
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={pending}
+              className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 font-medium text-ink hover:bg-white/90 disabled:opacity-60"
+            >
+              {pending && <Loader2 className="size-4 animate-spin" />} Save changes
             </button>
           </div>
         </div>

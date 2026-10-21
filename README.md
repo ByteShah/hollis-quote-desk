@@ -60,6 +60,7 @@ When the model isn't sure it should say so: excluded items are listed with a rea
 - KB04 dropped kerbs → **not offered**, refer to the council. TM03 resin → no price, ask Dave.
 - "herringbone +£4" and "road permit +£60" became modifiers the AI can select, priced by code.
 - BP04 (sand, "usually included in BP01??") is excluded so it isn't double-charged.
+- MI01 (the £450 minimum as an item) is never offered to the AI: the app applies the minimum itself as a visible top-up line, so it can't be charged twice.
 
 **Customers:** 13 rows → 9 customers. Merged by same email (Sandhu), same phone (Doyle), same surname + address (Okafor: "14 Linden Ave" = "14 Linden Avenue"), and same surname + company email domain (Hale). Kestrel Row's "send invoices here" and "30 day terms" become structured fields shown on the quote.
 

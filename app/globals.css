@@ -1,60 +1,110 @@
 @import "tailwindcss";
 
+/* Design tokens. Warm neutral surfaces with a deep "forest" brand colour:
+   calm, trade-appropriate, and leaves amber/red free to mean "look at this". */
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-canvas: #f6f5f1;
+  --color-surface: #ffffff;
+  --color-sunken: #f1efea;
+  --color-line: #e6e3dc;
+  --color-line-strong: #d6d2c8;
+  --color-ink: #1b1a17;
+  --color-ink-2: #4a4740;
+  --color-muted: #7a766c;
+
+  --color-brand: #1f4d3a;
+  --color-brand-hover: #173b2c;
+  --color-brand-soft: #e7efe9;
+  --color-brand-ink: #18402f;
+
+  --shadow-card: 0 1px 2px rgb(27 26 23 / 0.04), 0 1px 1px rgb(27 26 23 / 0.03);
+  --shadow-pop: 0 8px 24px -6px rgb(27 26 23 / 0.18), 0 2px 6px rgb(27 26 23 / 0.06);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: #f6f6f4;
-  color: #1c1c1a;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: var(--color-brand-soft);
+  color: var(--color-brand-ink);
 }
 
 @utility card {
-    @apply rounded-lg border border-stone-200 bg-white p-5;
-}
-
-@utility btn {
-    @apply inline-flex items-center justify-center rounded-md px-3.5 py-2 text-sm font-medium transition disabled:opacity-50;
-}
-
-@utility btn-primary {
-    @apply btn bg-stone-900 text-white hover:bg-stone-700;
-}
-
-@utility btn-secondary {
-    @apply btn border border-stone-300 bg-white hover:bg-stone-50;
-}
-
-@utility btn-approve {
-    @apply btn bg-emerald-700 text-white hover:bg-emerald-600;
-}
-
-@utility btn-danger {
-    @apply btn border border-red-300 bg-white text-red-700 hover:bg-red-50;
+  @apply rounded-xl border border-line bg-surface shadow-(--shadow-card);
 }
 
 @utility input {
-    @apply w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-stone-200;
+  @apply h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-muted/70 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 disabled:bg-sunken disabled:text-muted;
 }
 
 @utility label {
-    @apply mb-1 block text-sm font-medium text-stone-700;
+  @apply mb-1.5 block text-[13px] font-medium text-ink-2;
 }
 
 @utility th {
-    @apply border-b border-stone-200 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-stone-500;
+  @apply border-b border-line bg-sunken/60 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted;
 }
 
 @utility td {
-    @apply border-b border-stone-100 px-3 py-2 align-top text-sm;
+  @apply border-b border-line/70 px-4 py-3 align-top text-sm;
+}
+
+@utility num {
+  @apply tabular-nums;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-rise {
+  animation: rise 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media print {
   .no-print {
     display: none !important;
   }
+  .print-only {
+    display: block !important;
+  }
   body {
     background: white;
+  }
+  @page {
+    margin: 16mm;
   }
 }
