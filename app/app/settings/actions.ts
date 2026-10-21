@@ -3,37 +3,30 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getTenant } from "@/lib/tenant";
-import { saveAiCredentials } from "@/lib/ai-settings";
-import { AiError, testKey } from "@/lib/ai/provider";
 
 const input = z.object({
-  provider: z.enum(["openai", "anthropic"]),
-  model: z.string().trim().regex(/^[a-zA-Z0-9.\-_:]{2,80}$/, "Model name looks wrong."),
-  apiKey: z.string().trim().min(20, "That doesn't look like an API key.").max(300),
+  name: z.string().trim().min(2, "Enter the company name.").max(120),
+  min_charge: z.coerce.number().min(0).max(100000),
+  vat_percent: z.coerce.number().min(0).max(50),
+  auto_quote_max_m2: z.coerce.number().min(1).max(100000),
+  price_review_months: z.coerce.number().int().min(1).max(36),
+  quoting_rules: z.string().trim().max(4000),
 });
 
-export type SettingsState = { ok: boolean; message: string } | null;
+export type CompanyState = { ok: boolean; message: string } | null;
 
-export async function saveAiSettings(_prev: SettingsState, form: FormData): Promise<SettingsState> {
-  const tenant = await getTenant();
-  if (!tenant.can("company.settings")) return { ok: false, message: "Only an owner can change the AI key." };
-
-  const parsed = input.safeParse({ provider: form.get("provider"), model: form.get("model"), apiKey: form.get("apiKey") });
+export async function updateCompany(_prev: CompanyState, form: FormData): Promise<CompanyState> {
+  const t = await getTenant();
+  if (!t.can("company.settings")) return { ok: false, message: "Only an owner can change company settings." };
+  const parsed = input.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
-  const { provider, model, apiKey } = parsed.data;
-
-  if (provider === "anthropic" && !apiKey.startsWith("sk-ant-")) {
-    return { ok: false, message: "Anthropic keys start with sk-ant-." };
-  }
-
-  // Prove the key works before storing it.
-  try {
-    await testKey(provider, apiKey, model);
-  } catch (e) {
-    return { ok: false, message: e instanceof AiError ? e.message : "Couldn't check that key." };
-  }
-
-  await saveAiCredentials(tenant, provider, model, apiKey);
-  revalidatePath("/app/settings");
-  return { ok: true, message: "Key checked and saved." };
+  const { vat_percent, ...rest } = parsed.data;
+  // RLS also limits this update to owners of this company.
+  const { error } = await t.supabase
+    .from("companies")
+    .update({ ...rest, vat_rate: Math.round(vat_percent * 100) / 10000 })
+    .eq("id", t.company.id);
+  if (error) return { ok: false, message: "Couldn't save the settings." };
+  revalidatePath("/app", "layout");
+  return { ok: true, message: "Settings saved. New quotes use them straight away." };
 }

@@ -5,6 +5,7 @@ import { getTenant } from "@/lib/tenant";
 import { formatGBP } from "@/lib/quote/money";
 import { Card, EmptyState, LinkButton, PageHeader, Stat, cn } from "@/components/ui";
 import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
+import { SetupChecklist } from "@/components/setup-checklist";
 
 export const metadata: Metadata = { title: "Quotes" };
 
@@ -88,6 +89,8 @@ export default async function QuotesPage({
           </LinkButton>
         }
       />
+
+      <SetupChecklist />
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Awaiting review" value={counts.review} tone="info" href="/app/quotes?view=review" />

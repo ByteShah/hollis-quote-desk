@@ -13,7 +13,9 @@ export async function signIn(_prev: string | null, form: FormData): Promise<stri
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   // Same message for unknown email and wrong password.
   if (error) return "Email or password is incorrect.";
-  redirect("/app/quotes");
+  // Only same-site paths we expect, never an open redirect.
+  const next = String(form.get("next") ?? "");
+  redirect(/^\/(app|invite)\/[\w/?=&.-]*$/.test(next) && !next.includes("//") ? next : "/app/quotes");
 }
 
 export async function signOut() {
