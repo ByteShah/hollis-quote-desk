@@ -2,6 +2,7 @@ import Papa from "papaparse";
 import { normaliseUnit, type CanonicalUnit } from "@/lib/quote/units";
 import { parsePrice } from "./rates";
 import { categoryFor } from "./categories";
+import { applyHouseRules, type RuleRow } from "./house-rules";
 import { ukToday } from "@/lib/rates";
 import { dedupeRows, normEmail, normPhone, type ImportedCustomer } from "./customers";
 
@@ -63,6 +64,7 @@ export type CleanRate = {
   price: number | null;
   effective_from: string | null;
   import_notes: string;
+  modifiers: { id: string; label: string; amount: number; per: "unit" | "flat" }[];
 };
 
 export type ExistingRate = {
@@ -105,7 +107,11 @@ function parseDate(raw: string): string | null | "invalid" {
   return Number.isNaN(date.getTime()) || date.getUTCDate() !== Number(d) ? "invalid" : `${y}-${m}-${d}`;
 }
 
-export function cleanRateRow(row: string[], mapping: Mapping, vatRate: number): { value?: CleanRate; errors: string[]; warnings: string[] } {
+export function cleanRateRow(
+  row: string[],
+  mapping: Mapping,
+  vatRate: number,
+): { value?: CleanRate; errors: string[]; warnings: string[]; explicitStatus: boolean } {
   const errors: string[] = [];
   const warnings: string[] = [];
   const notesIn: string[] = [];
@@ -136,6 +142,7 @@ export function cleanRateRow(row: string[], mapping: Mapping, vatRate: number): 
   }
 
   let status = parseStatus(cell(row, mapping, "status"));
+  const explicitStatus = status != null;
   if (cell(row, mapping, "status") && !status) warnings.push(`Status "${cell(row, mapping, "status")}" not recognised; using the default.`);
   if (!status) {
     if (/we don'?t do/i.test(notes)) status = "not_offered";
@@ -151,21 +158,23 @@ export function cleanRateRow(row: string[], mapping: Mapping, vatRate: number): 
   const eff = parseDate(cell(row, mapping, "effective_from"));
   if (eff === "invalid") errors.push(`Date "${cell(row, mapping, "effective_from")}" isn't a valid date (use 2027-03-01 or 01/03/2027).`);
 
-  if (errors.length) return { errors, warnings };
+  if (errors.length) return { errors, warnings, explicitStatus };
   return {
     errors,
     warnings,
+    explicitStatus,
     value: {
       code,
       item,
       unit: unit!,
       unit_raw: unitRaw,
-      category: cell(row, mapping, "category") || categoryFor(code),
+      category: cell(row, mapping, "category") || categoryFor(code, item),
       status,
       notes: notes || null,
       price,
       effective_from: eff === "invalid" ? null : eff,
       import_notes: notesIn.join(" "),
+      modifiers: [],
     },
   };
 }
@@ -178,22 +187,35 @@ export function planRates(table: Table, mapping: Mapping, existing: ExistingRate
   const preview: PreviewRow[] = [];
   const items: RatePlan["items"] = [];
 
-  table.rows.slice(0, MAX_ROWS).forEach((row, i) => {
+  // Pass 1: clean every row. Pass 2: apply the house rules across the whole
+  // file (duplicates need to see every row). Pass 3: compare with what exists.
+  const cleaned = table.rows.slice(0, MAX_ROWS).map((row, i) => {
     const line = i + 2; // header is line 1
-    const { value, errors, warnings } = cleanRateRow(row, mapping, vatRate);
-    const key = value?.code ?? cell(row, mapping, "code").toUpperCase();
-    if (value && seen.has(value.code)) errors.push(`Code ${value.code} appears more than once in this file.`);
+    const r = cleanRateRow(row, mapping, vatRate);
+    const key = r.value?.code ?? cell(row, mapping, "code").toUpperCase();
+    if (r.value && seen.has(r.value.code)) r.errors.push(`Code ${r.value.code} appears more than once in this file.`);
+    if (r.value) seen.add(r.value.code);
+    return { ...r, line, key, row };
+  });
+  // Rules only apply to new items: existing ones were already decided by a person.
+  applyHouseRules(
+    cleaned.filter((c) => c.value && !c.errors.length && !byCode.has(c.value.code)) as unknown as RuleRow[],
+  );
+
+  cleaned.forEach(({ value, errors, warnings, line, key, row, explicitStatus }) => {
     if (!value || errors.length) {
       preview.push({ line, action: "error", key: key || "?", label: cell(row, mapping, "item"), changes: [], errors, warnings });
       return;
     }
-    seen.add(value.code);
     const cur = byCode.get(value.code);
     if (!cur) {
       preview.push({ line, action: "create", key: value.code, label: value.item, changes: [], errors, warnings });
       items.push({ ...value, action: "create" });
       return;
     }
+    // A person already decided this item's status; only an explicit Status
+    // column in the file changes it.
+    if (!explicitStatus) value.status = cur.status as RateStatus;
     const changes: string[] = [];
     if (cur.item !== value.item) changes.push(`Name: ${cur.item} → ${value.item}`);
     if (cur.unit !== value.unit) changes.push(`Unit: ${cur.unit} → ${value.unit}`);

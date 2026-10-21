@@ -52,6 +52,7 @@ const draft = (o: Partial<AiDraft>): AiDraft => ({
   outcome_reason: "",
   lines: [],
   excluded_items: [],
+  customer_contact: { name: null, phone: null, address: null, postcode: null },
   assumptions: [],
   questions_for_customer: [],
   suspicious_instructions: [],
@@ -168,5 +169,30 @@ describe("customer matching", () => {
   it("does not match Linda Price on the word 'price'", () => {
     const names = matchCustomer(enquiry("2-greenway-car-park.txt"), customers).map((m) => m.name);
     expect(names).not.toContain("Linda Price");
+  });
+});
+
+describe("price list narrowing", () => {
+  const many = Array.from({ length: 200 }, (_, i) => ({
+    code: `A${i}`, item: "x", unit: "m2" as const, rate_ex_vat: 1, status: "active" as const, notes: null, modifiers: [],
+    category: i < 100 ? "Fencing" : "Decking",
+  }));
+  const extra = { code: "N1", item: "Dropped kerb", unit: "each" as const, rate_ex_vat: null, status: "not_offered" as const, notes: null, modifiers: [], category: "Kerbs" };
+
+  it("only narrows big price lists", async () => {
+    const { needsNarrowing } = await import("@/lib/quote/catalog");
+    expect(needsNarrowing(many.slice(0, 50))).toBe(false);
+    expect(needsNarrowing(many)).toBe(true);
+  });
+  it("keeps picked categories plus anything not offered or unpriced", async () => {
+    const { narrowRates } = await import("@/lib/quote/catalog");
+    const out = narrowRates([...many, extra], ["Fencing"]);
+    expect(out.filter((r) => r.category === "Decking")).toHaveLength(0);
+    expect(out.filter((r) => r.category === "Fencing")).toHaveLength(100);
+    expect(out).toContain(extra);
+  });
+  it("falls back to everything if nothing was picked", async () => {
+    const { narrowRates } = await import("@/lib/quote/catalog");
+    expect(narrowRates(many, [])).toHaveLength(200);
   });
 });

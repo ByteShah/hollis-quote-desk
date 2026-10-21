@@ -15,11 +15,16 @@ export default async function NewCustomerPage({ searchParams }: { searchParams: 
   let fromQuoteId: string | null = null;
   const initial: CustomerFormValues = { name: "", company_name: "", emails: "", phones: "", address: "", postcode: "", invoice_email: "", payment_terms: "", tags: "", notes: "" };
   if (from_quote && /^[0-9a-f-]{36}$/i.test(from_quote)) {
-    const { data: q } = await supabase.from("quotes").select("id, enquiry_text, customer_id").eq("id", from_quote).maybeSingle();
+    const { data: q } = await supabase.from("quotes").select("id, enquiry_text, customer_id, customer_match").eq("id", from_quote).maybeSingle();
     if (q && !q.customer_id) {
+      // Email headers first (exact); the AI's reading of the signature fills the rest.
+      const contact = ((q.customer_match as { contact?: Record<string, string | null> })?.contact ?? {}) as Record<string, string | null>;
       fromQuoteId = q.id;
-      initial.name = senderName(q.enquiry_text) ?? "";
+      initial.name = senderName(q.enquiry_text) ?? contact.name ?? "";
       initial.emails = senderEmail(q.enquiry_text) ?? "";
+      initial.phones = contact.phone ?? "";
+      initial.address = contact.address ?? "";
+      initial.postcode = contact.postcode ?? "";
     }
   }
   const { data: tagRows } = await supabase.from("customers").select("tags").eq("company_id", company.id).is("archived_at", null);
@@ -30,7 +35,7 @@ export default async function NewCustomerPage({ searchParams }: { searchParams: 
       <PageHeader
         eyebrow={<Link href="/app/customers" className="hover:text-ink">Customers</Link>}
         title="New customer"
-        description={fromQuoteId ? "Filled in from the enquiry. Saving links this customer to the quote." : "We'll warn you if someone already has the same email or phone number."}
+        description={fromQuoteId ? "Filled in from the enquiry (check the details: they were read from the email). Saving links this customer to the quote." : "We'll warn you if someone already has the same email or phone number."}
       />
       <Card>
         <CustomerForm mode="create" initial={initial} fromQuoteId={fromQuoteId} readOnly={false} tagSuggestions={tags} />

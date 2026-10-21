@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, Loader2, Printer, RotateCcw, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
@@ -80,6 +81,13 @@ export function ReviewActions({
               <span className="font-semibold num">{outcome === "quote" ? formatGBP(total) : "Site visit reply"}</span>
             </div>
           </div>
+          {!customerName && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[13px] text-amber-900 ring-1 ring-amber-200">
+              This quote isn&apos;t linked to a customer. You can still approve it, but saving the customer first keeps their history and
+              payment terms in one place.{" "}
+              <Link href={`/app/customers/new?from_quote=${quoteId}`} className="font-medium underline">Save as new customer</Link>
+            </p>
+          )}
           {hasDanger && (
             <p className="mt-3 flex gap-2 rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-800 ring-1 ring-red-200">
               <ShieldAlert className="mt-0.5 size-4 shrink-0" />

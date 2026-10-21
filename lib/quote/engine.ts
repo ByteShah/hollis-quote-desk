@@ -1,10 +1,11 @@
 import "server-only";
-import { generateDraft } from "@/lib/ai/provider";
+import { generateDraft, pickCategories, type Usage } from "@/lib/ai/provider";
 import { systemPrompt, userPrompt } from "@/lib/ai/prompt";
 import { loadAiCredentials } from "@/lib/ai-settings";
 import { matchCustomer, type CustomerRecord } from "@/lib/customers/match";
 import { buildQuote, type Rate } from "./build";
 import { stalePriceFlags } from "./stale";
+import { categoriesOf, categoryPrompt, narrowRates, needsNarrowing } from "./catalog";
 import type { Tenant } from "@/lib/tenant";
 
 export const MAX_ENQUIRY_CHARS = 10_000;
@@ -33,7 +34,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
   const [{ data: rateRows, error: rErr }, { data: customerRows, error: cErr }] = await Promise.all([
     supabase
       .from("rates_current")
-      .select("code, item, unit, rate_ex_vat, status, notes, modifiers, price_since, last_reviewed_at")
+      .select("code, item, unit, category, rate_ex_vat, status, notes, modifiers, price_since, last_reviewed_at")
       .eq("company_id", company.id)
       .neq("status", "archived"),
     supabase
@@ -69,15 +70,32 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
         .join("\n")
     : null;
 
-  const { draft, raw } = await generateDraft({
-    provider: creds.provider,
-    apiKey: creds.apiKey,
-    model: creds.model,
-    system: systemPrompt(company, rates),
-    user: userPrompt(enquiry, customerContext),
-  });
+  const base = { provider: creds.provider, apiKey: creds.apiKey, model: creds.model, cacheKey: `quote-desk:${company.id}` };
+  const usage: Usage = { input: 0, cached: 0, output: 0 };
 
+  // Large price lists: a cheap first call picks the categories this job needs,
+  // so the main call doesn't carry thousands of irrelevant items.
+  let offered = rates;
+  let narrowedTo: string[] | null = null;
+  if (needsNarrowing(rates)) {
+    const picked = await pickCategories(
+      { ...base, system: categoryPrompt(company.name, categoriesOf(rates)), user: userPrompt(enquiry, null) },
+      categoriesOf(rates).map((c) => c.name),
+    );
+    Object.entries(picked.usage).forEach(([k, v]) => (usage[k as keyof Usage] += v));
+    offered = narrowRates(rates, picked.categories);
+    narrowedTo = picked.categories.length ? picked.categories : null;
+  }
+
+  const result = await generateDraft({ ...base, system: systemPrompt(company, offered), user: userPrompt(enquiry, customerContext) });
+  Object.entries(result.usage).forEach(([k, v]) => (usage[k as keyof Usage] += v));
+  const { draft, raw } = result;
+
+  // Pricing always uses the full price list: narrowing only limits what the AI sees.
   const built = buildQuote(draft, rates, company, enquiry);
+  if (narrowedTo) {
+    built.flags.push({ level: "info", message: `Large price list: the AI was shown ${narrowedTo.join(", ")} (${offered.length} of ${rates.length} items).` });
+  }
   built.flags.push(...stalePriceFlags(built.lines, rateRows ?? [], company.price_review_months));
 
   const { data: quote, error: qErr } = await supabase
@@ -88,7 +106,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
       enquiry_text: enquiry,
       outcome: built.outcome,
       summary: draft.job_summary,
-      customer_match: { matches, outcome_reason: draft.outcome_reason },
+      customer_match: { matches, outcome_reason: draft.outcome_reason, contact: draft.customer_contact },
       assumptions: draft.assumptions,
       questions: draft.questions_for_customer,
       exclusions: built.exclusions,
@@ -98,7 +116,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
       total: built.total,
       provider: creds.provider,
       model: creds.model,
-      ai_raw: raw,
+      ai_raw: { output: raw, usage, items_offered: offered.length, items_total: rates.length },
       created_by: user.id,
     })
     .select("id")

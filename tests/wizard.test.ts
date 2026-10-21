@@ -3,6 +3,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { planCustomers, planRates, readCsv, suggestMapping, summarise, type ExistingCustomer } from "@/lib/import/wizard";
 import { csvCell, toCsv } from "@/lib/csv";
+import { parseRatesCsv } from "@/lib/import/rates";
+import { HOLLIS_RATE_DECISIONS } from "@/lib/import/hollis-decisions";
+import { categoryFor } from "@/lib/import/categories";
 
 const brief = (f: string) => readFileSync(path.join(__dirname, "..", "brief", f), "utf8");
 
@@ -26,6 +29,29 @@ describe("rates import", () => {
     expect(get("CO02").price).toBe(1250);
     expect(get("EX03").unit).toBe("m2");
     expect(get("BP01").category).toBe("Block paving");
+  });
+
+  it("reaches the same decisions as the hand-checked Hollis import, on its own", () => {
+    const plan = planRates(table, mapping, [], 0.2);
+    const seeded = parseRatesCsv(brief("02-rates.csv"), { vatRate: 0.2, decisions: HOLLIS_RATE_DECISIONS });
+    for (const s of seeded) {
+      const got = plan.items.find((i) => i.code === s.code)!;
+      expect({ code: s.code, status: got.status }).toEqual({ code: s.code, status: s.status });
+    }
+    const bp01 = plan.items.find((i) => i.code === "BP01")!;
+    expect(bp01.modifiers).toEqual([{ id: "herringbone", label: "Herringbone", amount: 4, per: "unit" }]);
+    const pl01 = plan.items.find((i) => i.code === "PL01")!;
+    expect(pl01.modifiers).toMatchObject([{ amount: 60, per: "flat" }]);
+    expect(pl01.modifiers[0].label).toMatch(/permit/i);
+    const kb02 = plan.preview.find((p) => p.key === "KB02")!;
+    expect(kb02.warnings.join(" ")).toMatch(/duplicate of KB01/);
+  });
+
+  it("guesses categories from item names for any company", () => {
+    expect(categoryFor("X1", "Close-board fencing 1.8m")).toBe("Fencing");
+    expect(categoryFor("A7", "Linear channel drain")).toBe("Drainage");
+    expect(categoryFor("Q3", "Granite kerb")).toBe("Kerbs & edging");
+    expect(categoryFor("Z9", "Something else")).toBeNull();
   });
 
   it("only reports real changes against existing items", () => {

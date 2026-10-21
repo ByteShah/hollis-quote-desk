@@ -90,7 +90,7 @@ await step("schedule price rise", async () => {
 await step("edit details and save", async () => {
   await fillForm("#notes", "edited by e2e");
   await page.click("button:has-text('Save')");
-  await page.getByText("Saved").waitFor({ timeout: 10000 });
+  await page.getByText("Saved", { exact: true }).waitFor({ timeout: 10000 });
 });
 await step("history shows events", async () => {
   await page.reload();
@@ -129,7 +129,7 @@ await step("edit and history", async () => {
   await page.waitForURL(/\/app\/customers\/[0-9a-f-]{36}$/); await page.waitForLoadState("networkidle");
   await fillForm("#payment_terms", "14 days");
   await page.click("button:has-text('Save')");
-  await page.getByText("Saved").waitFor({ timeout: 10000 });
+  await page.getByText("Saved", { exact: true }).waitFor({ timeout: 10000 });
   await page.reload({ waitUntil: "networkidle" });
   await page.getByText(/Payment terms: empty → 14 days/).waitFor({ timeout: 10000 });
 });

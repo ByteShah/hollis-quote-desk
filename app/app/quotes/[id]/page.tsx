@@ -90,6 +90,9 @@ export default async function QuotePage({
   const meta = quote.customer_match as { matches?: CustomerMatch[]; outcome_reason?: string };
   const matches = meta.matches ?? [];
   const flags = quote.flags as Flag[];
+  const usage = (quote.ai_raw as { usage?: { input: number; cached: number; output: number }; items_offered?: number; items_total?: number } | null)?.usage
+    ? (quote.ai_raw as { usage: { input: number; cached: number; output: number }; items_offered: number; items_total: number })
+    : null;
   const exclusions = quote.exclusions as Exclusion[];
   const editable = quote.status !== "approved";
   const preview = tab === "preview";
@@ -281,6 +284,22 @@ export default async function QuotePage({
                     <dd className="truncate font-mono text-xs">{quote.model}</dd>
                   </div>
                 </dl>
+                {usage && (
+                  <dl className="mt-3 space-y-1.5 border-t border-line/70 pt-3 text-[13px]">
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted">Price list sent</dt>
+                      <dd className="num">{usage.items_offered} of {usage.items_total} items</dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted">Tokens in / out</dt>
+                      <dd className="num">{usage.usage.input.toLocaleString("en-GB")} / {usage.usage.output.toLocaleString("en-GB")}</dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted">Read from cache</dt>
+                      <dd className="num">{usage.usage.input ? Math.round((usage.usage.cached / usage.usage.input) * 100) : 0}%</dd>
+                    </div>
+                  </dl>
+                )}
                 {meta.outcome_reason && <p className="mt-3 border-t border-line/70 pt-3 text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>}
               </Card>
 

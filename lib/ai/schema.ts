@@ -33,6 +33,12 @@ export const draftSchema = z.object({
   excluded_items: z
     .array(z.object({ request: z.string().max(300), reason: z.enum(EXCLUSION_REASONS), note: z.string().max(600) }))
     .max(20),
+  customer_contact: z.object({
+    name: z.string().max(200).nullable(),
+    phone: z.string().max(60).nullable(),
+    address: z.string().max(300).nullable(),
+    postcode: z.string().max(12).nullable(),
+  }),
   assumptions: z.array(z.string().max(400)).max(20),
   questions_for_customer: z.array(z.string().max(400)).max(10),
   suspicious_instructions: z.array(z.string().max(600)).max(10),
@@ -55,6 +61,7 @@ export const draftJsonSchema = {
     "outcome_reason",
     "lines",
     "excluded_items",
+    "customer_contact",
     "assumptions",
     "questions_for_customer",
     "suspicious_instructions",
@@ -121,6 +128,18 @@ export const draftJsonSchema = {
           reason: { type: "string", enum: [...EXCLUSION_REASONS] },
           note: { type: "string", description: "What to tell the customer / reviewer." },
         },
+      },
+    },
+    customer_contact: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "phone", "address", "postcode"],
+      description: "The sender's contact details as written in the enquiry (signature, site address). null for anything not given. Used to pre-fill a new customer record.",
+      properties: {
+        name: { type: ["string", "null"] },
+        phone: { type: ["string", "null"] },
+        address: { type: ["string", "null"], description: "The address the work is at, if given." },
+        postcode: { type: ["string", "null"] },
       },
     },
     assumptions: strArr,
