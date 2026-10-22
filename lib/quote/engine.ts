@@ -76,6 +76,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
         best.address && `Address on file: ${best.address}`,
         best.notes && `History: ${best.notes}`,
         best.payment_terms && `Payment terms: ${best.payment_terms}`,
+        best.invoice_email && `Send invoices to: ${best.invoice_email}`,
       ]
         .filter(Boolean)
         .join("\n")

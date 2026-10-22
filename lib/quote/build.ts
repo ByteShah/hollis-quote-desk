@@ -159,6 +159,7 @@ export function buildQuote(
 
     let unitRate = rate.rate_ex_vat;
     const extras: string[] = [];
+    const flatExtras: QuoteLine[] = [];
     for (const modId of l.modifiers) {
       const mod = rate.modifiers.find((m) => m.id === modId);
       if (!mod) {
@@ -170,12 +171,13 @@ export function buildQuote(
         extras.push(mod.label);
       } else {
         // Customer-facing description; the rate it belongs to goes in the internal note.
-        lines.push(systemLine(null, mod.label, 1, "each", mod.amount, "ai", `Extra for ${rate.code}. ${l.reasoning}`));
+        flatExtras.push(systemLine(null, mod.label, 1, "each", mod.amount, "ai", `Extra for ${rate.code}. ${l.reasoning}`));
       }
     }
 
     const description = extras.length ? `${rate.item} (${extras.join(", ")})` : rate.item;
-    lines.push(systemLine(rate.code, description, qty, rate.unit, unitRate, "ai", l.reasoning + loadNote));
+    // A flat extra (the skip's road permit) follows the line it belongs to.
+    lines.push(systemLine(rate.code, description, qty, rate.unit, unitRate, "ai", l.reasoning + loadNote), ...flatExtras);
 
     // Optional extras the AI didn't add: remind the reviewer they exist.
     for (const mod of rate.modifiers.filter((m) => !l.modifiers.includes(m.id))) {

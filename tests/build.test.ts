@@ -96,7 +96,7 @@ describe("buildQuote", () => {
 
   it("adds the flat road permit as its own line", () => {
     const q = buildQuote(draft({ lines: [line({ rate_code: "PL01", stated_quantity: 1, stated_unit: "each", modifiers: ["road_permit"] })] }), rates, company, "");
-    expect(q.lines.map((l) => l.line_total)).toEqual([60, 310, 80]);
+    expect(q.lines.map((l) => l.line_total)).toEqual([310, 60, 80]); // skip, its permit, minimum top-up
   });
 
   it("turns not-offered and unpriced rates into exclusions", () => {
