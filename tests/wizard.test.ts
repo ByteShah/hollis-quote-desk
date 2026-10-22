@@ -34,16 +34,16 @@ describe("rates import", () => {
   it("reaches the same decisions as the hand-checked Hollis import, on its own", () => {
     const plan = planRates(table, mapping, [], 0.2);
     const seeded = parseRatesCsv(brief("02-rates.csv"), { vatRate: 0.2, decisions: HOLLIS_RATE_DECISIONS });
-    // CO02's note asks for a check; only Dave's answer (per load) could settle
-    // it, so the importer holds it back for a person instead.
-    for (const s of seeded.filter((s) => s.code !== "CO02")) {
+    for (const s of seeded) {
       const got = plan.items.find((i) => i.code === s.code)!;
+      if (s.code === "CO02") continue; // only an answer can settle it; see the next test
       expect({ code: s.code, status: got.status, visit: !!got.site_visit_reason }).toEqual({
         code: s.code,
         status: s.status,
         visit: !!s.site_visit_reason,
       });
     }
+    // Unanswered, the doubtful concrete price is held back rather than guessed.
     expect(plan.items.find((i) => i.code === "CO02")!.status).toBe("price_on_request");
     expect(plan.items.find((i) => i.code === "BP04")!.included_in).toEqual(["BP01"]);
     const bp01 = plan.items.find((i) => i.code === "BP01")!;
@@ -53,6 +53,43 @@ describe("rates import", () => {
     expect(pl01.modifiers[0].label).toMatch(/permit/i);
     const kb02 = plan.preview.find((p) => p.key === "KB02")!;
     expect(kb02.warnings.join(" ")).toMatch(/duplicate of KB01/);
+  });
+
+  it("asks what the file can't say, and with Dave's answers matches the confirmed setup exactly", () => {
+    const unanswered = planRates(table, mapping, [], 0.2);
+    expect(unanswered.questions.map((q) => q.id)).toEqual(["load:CO02", "incl:BP04"]);
+    const incl = unanswered.questions.find((q) => q.kind === "also_included_in")!;
+    expect(incl.kind === "also_included_in" && incl.options.map((o) => o.code)).toEqual(["BP03"]);
+
+    const plan = planRates(table, mapping, [], 0.2, { "load:CO02": 6, "incl:BP04": ["BP03"] });
+    const seeded = parseRatesCsv(brief("02-rates.csv"), { vatRate: 0.2, decisions: HOLLIS_RATE_DECISIONS });
+    for (const s of seeded) {
+      const got = plan.items.find((i) => i.code === s.code)!;
+      expect({
+        code: got.code,
+        status: got.status,
+        unit: got.unit,
+        price: got.price,
+        load_size: got.load_size ?? null,
+        included_in: got.included_in,
+        visit: !!got.site_visit_reason,
+      }).toEqual({
+        code: s.code,
+        status: s.status,
+        unit: s.unit,
+        price: s.rate_ex_vat,
+        load_size: s.load_size ?? null,
+        included_in: s.included_in ?? [],
+        visit: !!s.site_visit_reason,
+      });
+    }
+    expect(plan.items.find((i) => i.code === "CO02")!.import_notes).toMatch(/Answered at import: priced per load of 6/);
+  });
+
+  it("ignores answers to questions it didn't ask", () => {
+    const plan = planRates(table, mapping, [], 0.2, { "load:EX01": 3, "incl:BP04": ["EX01", "BP03"] });
+    expect(plan.items.find((i) => i.code === "EX01")!.unit).toBe("m2");
+    expect(plan.items.find((i) => i.code === "BP04")!.included_in).toEqual(["BP01", "BP03"]);
   });
 
   it("guesses categories from item names for any company", () => {

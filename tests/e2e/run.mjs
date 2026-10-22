@@ -253,6 +253,28 @@ await step("new company sees no Hollis data", async () => {
   await page.goto(base + "/app/customers", { waitUntil: "networkidle" });
   await page.getByText("No customers yet").waitFor();
 });
+await step("new company imports Shaz's raw price list, answering its questions", async () => {
+  await page.goto(base + "/app/rates/import", { waitUntil: "networkidle" });
+  await page.setInputFiles("input[type=file]", path.join(csvDir, "../../brief/02-rates.csv"));
+  await page.getByText("2 to answer").waitFor({ timeout: 15000 });
+  await page.getByLabel("Cubic metres in one load").fill("6");
+  await page.getByRole("checkbox", { name: /BP03/ }).check();
+  await page.getByText("All answered").waitFor();
+  await page.getByText(/priced per load of 6 m³/).first().waitFor({ timeout: 15000 });
+  await page.getByRole("button", { name: "Import 40 items" }).click();
+  await page.waitForURL(/\/app\/imports\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  const openItem = async (code) => {
+    await page.goto(base + "/app/rates?view=all&q=" + code, { waitUntil: "networkidle" });
+    await page.getByRole("link", { name: "Open " + code }).click();
+    await page.waitForURL(/\/app\/rates\/[0-9a-f-]{36}$/); await page.waitForLoadState("networkidle");
+  };
+  await openItem("CO02");
+  if ((await page.inputValue("#load_size")) !== "6") throw new Error("CO02 load size not saved");
+  await openItem("BP04");
+  if ((await page.inputValue("#included_in")) !== "BP01, BP03") throw new Error("BP04 included_in not saved");
+  await openItem("DR03");
+  if (!(await page.inputValue("#site_visit_reason"))) throw new Error("DR03 not marked for a site visit");
+});
 await step("owner edits company settings", async () => {
   await page.goto(base + "/app/settings", { waitUntil: "networkidle" });
   await page.fill("#min_charge", "350");

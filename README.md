@@ -133,6 +133,12 @@ Shaz's CSVs are loaded exactly as sent. The same cleaning rules run in the seed 
 - "??" or "check" → no price until confirmed.
 - Duplicates → the new or higher price wins.
 
+**What the file can't say, the importer asks.** It doesn't guess. Some answers only exist in Dave's head, so the preview asks the person importing, and their answers are applied in the same import and recorded on each item:
+- **CO02, "think this is per load?? check":** asks whether it's per load and how many m³ a load holds. Unanswered, it has no price.
+- **BP04, "included in BP01":** asks whether it's also included in similar items still in use (BP03).
+
+With Dave's two answers (6 m³, BP03), importing Shaz's raw file gives exactly the confirmed setup. A unit test checks this, and a browser test runs it in a new company.
+
 **Customers:** 13 rows became 9 customers.
 - Merged when they share an email (Sandhu), a phone number (Doyle), a surname and address (Okafor: "14 Linden Ave" = "14 Linden Avenue"), or a surname and company email domain (Hale).
 - Kestrel Row's "send invoices here" and "30 day terms" became structured fields that show on the quote.
@@ -156,7 +162,7 @@ My own assumptions:
 
 ```bash
 cp .env.example .env.local      # Supabase URL/keys, KEY_ENCRYPTION_SECRET (openssl rand -base64 32), SEED_PASSWORD
-supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0021)
+supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0022)
 npm install
 npm run seed                    # companies, logins, platform admin, Hollis price list and customers
 npm run dev
@@ -165,8 +171,8 @@ npm run dev
 Then sign in as an owner, open **Settings → AI provider**, and paste an OpenAI or Anthropic key.
 
 **Tests**
-- `npm test`: 67 tests. 45 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that it reaches the same decisions as the hand-checked import), price-list narrowing, UK dates and CSV safety. The other 22 test RLS against the live database and run when `.env.local` is present.
-- `npm run e2e` (with `npm run dev` running): 30 browser steps covering the price list, customers, CSV import and undo, onboarding, roles and lockout. It uses your installed Chrome and cleans up after itself.
+- `npm test`: 69 tests. 47 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that, with Dave's answers, it reaches exactly the confirmed setup), price-list narrowing, UK dates and CSV safety. The other 22 test RLS against the live database and run when `.env.local` is present.
+- `npm run e2e` (with `npm run dev` running): 31 browser steps covering the price list, customers, CSV import and undo, importing Shaz's raw file with the importer's questions, onboarding, roles and lockout. It uses your installed Chrome and cleans up after itself.
 
 ## What I'd do next
 

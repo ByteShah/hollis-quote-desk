@@ -2,7 +2,7 @@ import Papa from "papaparse";
 import { normaliseUnit, type CanonicalUnit } from "@/lib/quote/units";
 import { parsePrice } from "./rates";
 import { categoryFor } from "./categories";
-import { applyHouseRules, type RuleRow } from "./house-rules";
+import { applyHouseRules, type ImportAnswers, type ImportQuestion, type RuleRow } from "./house-rules";
 import { ukToday } from "@/lib/rates";
 import { dedupeRows, normEmail, normPhone, type ImportedCustomer } from "./customers";
 
@@ -67,6 +67,7 @@ export type CleanRate = {
   modifiers: { id: string; label: string; amount: number; per: "unit" | "flat" }[];
   included_in: string[];
   site_visit_reason: string | null;
+  load_size: number | null;
 };
 
 export type ExistingRate = {
@@ -179,13 +180,24 @@ export function cleanRateRow(
       modifiers: [],
       included_in: [],
       site_visit_reason: null,
+      load_size: null,
     },
   };
 }
 
-export type RatePlan = { preview: PreviewRow[]; items: (CleanRate & { action: "create" | "update" })[] };
+export type RatePlan = {
+  preview: PreviewRow[];
+  items: (CleanRate & { action: "create" | "update" })[];
+  questions: ImportQuestion[];
+};
 
-export function planRates(table: Table, mapping: Mapping, existing: ExistingRate[], vatRate: number): RatePlan {
+export function planRates(
+  table: Table,
+  mapping: Mapping,
+  existing: ExistingRate[],
+  vatRate: number,
+  answers: ImportAnswers = {},
+): RatePlan {
   const byCode = new Map(existing.map((e) => [e.code, e]));
   const seen = new Set<string>();
   const preview: PreviewRow[] = [];
@@ -202,8 +214,9 @@ export function planRates(table: Table, mapping: Mapping, existing: ExistingRate
     return { ...r, line, key, row };
   });
   // Rules only apply to new items: existing ones were already decided by a person.
-  applyHouseRules(
+  const questions = applyHouseRules(
     cleaned.filter((c) => c.value && !c.errors.length && !byCode.has(c.value.code)) as unknown as RuleRow[],
+    answers,
   );
 
   cleaned.forEach(({ value, errors, warnings, line, key, row, explicitStatus }) => {
@@ -247,7 +260,7 @@ export function planRates(table: Table, mapping: Mapping, existing: ExistingRate
       action: "update",
     });
   });
-  return { preview, items };
+  return { preview, items, questions };
 }
 
 // ---------------------------------------------------------------------------

@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Check, Download, FileUp, Loader2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Download, FileUp, HelpCircle, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS, MAX_BYTES, type Kind, type Mapping } from "@/lib/import/fields";
 import { Badge, Button, buttonClass, cn } from "@/components/ui";
+import type { ImportAnswers, ImportQuestion } from "@/lib/import/house-rules";
 import { applyImport, previewImport, type PreviewResult } from "./actions";
 
 type Preview = Extract<PreviewResult, { ok: true }>;
@@ -23,6 +24,7 @@ export function ImportWizard({ kind }: { kind: Kind }) {
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
+  const [answers, setAnswers] = useState<ImportAnswers>({});
   const [filter, setFilter] = useState<"all" | "create" | "update" | "unchanged" | "error">("all");
   const [skipErrors, setSkipErrors] = useState(false);
   const [loading, startLoading] = useTransition();
@@ -32,9 +34,9 @@ export function ImportWizard({ kind }: { kind: Kind }) {
   const router = useRouter();
   const [one, many] = NOUN[kind];
 
-  const run = (f: { name: string; text: string }, m: Mapping | null) =>
+  const run = (f: { name: string; text: string }, m: Mapping | null, a: ImportAnswers = answers) =>
     startLoading(async () => {
-      const res = await previewImport({ kind, filename: f.name, text: f.text, mapping: m });
+      const res = await previewImport({ kind, filename: f.name, text: f.text, mapping: m, answers: a });
       if (!res.ok) {
         toast.error(res.error);
         return;
@@ -51,7 +53,8 @@ export function ImportWizard({ kind }: { kind: Kind }) {
     const loaded = { name: f.name, text: await f.text() };
     setFile(loaded);
     setPreview(null);
-    run(loaded, null);
+    setAnswers({});
+    run(loaded, null, {});
   };
 
   // Re-check the preview whenever the column matching changes.
@@ -66,6 +69,19 @@ export function ImportWizard({ kind }: { kind: Kind }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(mapping)]);
 
+  // Answers change the plan, so the preview is recalculated on the server.
+  const firstAnswers = useRef(true);
+  useEffect(() => {
+    if (firstAnswers.current) {
+      firstAnswers.current = false;
+      return;
+    }
+    if (!file || !mapping) return;
+    const id = setTimeout(() => run(file, mapping), 350);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(answers)]);
+
   const step = !file ? 0 : !preview || preview.missing.length ? 1 : 2;
   const s = preview?.summary;
   const importable = (s?.create ?? 0) + (s?.update ?? 0);
@@ -73,7 +89,7 @@ export function ImportWizard({ kind }: { kind: Kind }) {
 
   const apply = () =>
     startApply(async () => {
-      const res = await applyImport({ kind, filename: file!.name, text: file!.text, mapping });
+      const res = await applyImport({ kind, filename: file!.name, text: file!.text, mapping, answers });
       if (!res.ok) return void toast.error(res.error);
       toast.success(`Imported ${importable} ${importable === 1 ? one : many}`);
       router.push(`/app/imports/${res.batchId}`);
@@ -197,6 +213,22 @@ export function ImportWizard({ kind }: { kind: Kind }) {
         </section>
       )}
 
+      {/* Questions the file can't answer by itself */}
+      {preview && preview.missing.length === 0 && preview.questions.length > 0 && (
+        <Questions
+          questions={preview.questions}
+          answers={answers}
+          onAnswer={(id, a) =>
+            setAnswers((cur) => {
+              const next = { ...cur };
+              if (a === undefined) delete next[id];
+              else next[id] = a;
+              return next;
+            })
+          }
+        />
+      )}
+
       {/* Step 3: preview */}
       {preview && preview.missing.length === 0 && s && (
         <section className="card overflow-hidden">
@@ -272,5 +304,133 @@ export function ImportWizard({ kind }: { kind: Kind }) {
         </section>
       )}
     </div>
+  );
+}
+
+function Questions({
+  questions,
+  answers,
+  onAnswer,
+}: {
+  questions: ImportQuestion[];
+  answers: ImportAnswers;
+  onAnswer: (id: string, a: ImportAnswers[string] | undefined) => void;
+}) {
+  const open = questions.filter((q) => answers[q.id] === undefined).length;
+  return (
+    <section className="card">
+      <header className="flex flex-wrap items-center gap-2 border-b border-line/70 px-5 py-3.5">
+        <HelpCircle className="size-4 text-brand" />
+        <h2 className="text-sm font-semibold">Questions about this file</h2>
+        <Badge tone={open ? "warning" : "success"}>{open ? `${open} to answer` : "All answered"}</Badge>
+        <p className="basis-full text-[13px] text-muted">
+          The file doesn&apos;t say, so we won&apos;t guess. Your answers are applied in this import. Anything left unanswered is
+          imported the safe way and can be set on the item later.
+        </p>
+      </header>
+      <ul className="divide-y divide-line/70">
+        {questions.map((q) => (
+          <li key={q.id} className="px-5 py-4 text-sm">
+            {q.kind === "load_size" ? (
+              <LoadQuestion q={q} answer={answers[q.id]} onAnswer={(a) => onAnswer(q.id, a)} />
+            ) : (
+              <IncludedQuestion q={q} answer={answers[q.id]} onAnswer={(a) => onAnswer(q.id, a)} />
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function LoadQuestion({
+  q,
+  answer,
+  onAnswer,
+}: {
+  q: Extract<ImportQuestion, { kind: "load_size" }>;
+  answer: ImportAnswers[string] | undefined;
+  onAnswer: (a: number | "listed" | undefined) => void;
+}) {
+  const [choice, setChoice] = useState<"load" | "listed" | "later">(typeof answer === "number" ? "load" : answer === "listed" ? "listed" : "later");
+  const [size, setSize] = useState(typeof answer === "number" ? String(answer) : "");
+  const pick = (c: typeof choice, s = size) => {
+    setChoice(c);
+    const n = Number(s);
+    onAnswer(c === "listed" ? "listed" : c === "load" && n > 0 && n <= 1000 ? n : undefined);
+  };
+  return (
+    <fieldset>
+      <legend className="mb-2">
+        <span className="font-mono text-xs font-medium">{q.code}</span> {q.item}: the note says &ldquo;{q.note}&rdquo;. How is it priced?
+      </legend>
+      <div className="space-y-1.5">
+        <label className="flex flex-wrap items-center gap-2">
+          <input type="radio" name={q.id} checked={choice === "load"} onChange={() => pick("load")} className="accent-(--color-brand)" />
+          Per load. One load holds
+          <input
+            className="input h-8 w-20 num"
+            type="number"
+            min="0"
+            step="0.5"
+            inputMode="decimal"
+            aria-label="Cubic metres in one load"
+            value={size}
+            onChange={(e) => {
+              setSize(e.target.value);
+              pick("load", e.target.value);
+            }}
+            placeholder="6"
+          />
+          m³, and a part load is charged as a full load.
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="radio" name={q.id} checked={choice === "listed"} onChange={() => pick("listed")} className="accent-(--color-brand)" />
+          As listed in the file
+        </label>
+        <label className="flex items-center gap-2 text-muted">
+          <input type="radio" name={q.id} checked={choice === "later"} onChange={() => pick("later")} className="accent-(--color-brand)" />
+          Decide later (not used on quotes until someone sets it)
+        </label>
+      </div>
+    </fieldset>
+  );
+}
+
+function IncludedQuestion({
+  q,
+  answer,
+  onAnswer,
+}: {
+  q: Extract<ImportQuestion, { kind: "also_included_in" }>;
+  answer: ImportAnswers[string] | undefined;
+  onAnswer: (a: string[]) => void;
+}) {
+  const picked = Array.isArray(answer) ? answer : [];
+  return (
+    <fieldset>
+      <legend className="mb-2">
+        <span className="font-mono text-xs font-medium">{q.code}</span> {q.item} is included in {q.parent}. Is it also included in these
+        similar items? Ticked items never have it charged alongside them.
+      </legend>
+      <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+        {q.options.map((o) => (
+          <label key={o.code} className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={picked.includes(o.code)}
+              onChange={(e) => onAnswer(e.target.checked ? [...picked, o.code] : picked.filter((c) => c !== o.code))}
+              className="accent-(--color-brand)"
+            />
+            <span className="font-mono text-xs">{o.code}</span> {o.item}
+          </label>
+        ))}
+        {answer === undefined && (
+          <button type="button" className={buttonClass("ghost", "sm")} onClick={() => onAnswer([])}>
+            None of these
+          </button>
+        )}
+      </div>
+    </fieldset>
   );
 }

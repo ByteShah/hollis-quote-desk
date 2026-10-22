@@ -18,6 +18,7 @@ import {
   type Mapping,
   type PreviewRow,
 } from "@/lib/import/wizard";
+import type { ImportAnswers, ImportQuestion } from "@/lib/import/house-rules";
 
 // Imports: the browser sends the file text; the server parses, cleans and
 // compares it with the company's data for the preview, and does all of that
@@ -31,6 +32,14 @@ const input = z.object({
   filename: z.string().trim().min(1).max(200),
   text: z.string().max(MAX_BYTES, "The file is over 2 MB."),
   mapping: z.record(z.string(), z.number().int().min(0).max(200).nullable()).nullable(),
+  // Answers to the preview's questions; the planner only uses ids it asked.
+  answers: z
+    .record(
+      z.string().max(40),
+      z.union([z.number().positive().max(1000), z.literal("listed"), z.array(z.string().max(20)).max(20)]),
+    )
+    .refine((a) => Object.keys(a).length <= 200)
+    .optional(),
 });
 
 export type PreviewResult =
@@ -42,11 +51,12 @@ export type PreviewResult =
       missing: string[];
       rows: PreviewRow[];
       summary: ReturnType<typeof summarise>;
+      questions: ImportQuestion[];
       truncated: boolean;
     }
   | { ok: false; error: string };
 
-async function plan(t: Tenant, kind: Kind, text: string, mapping: Mapping) {
+async function plan(t: Tenant, kind: Kind, text: string, mapping: Mapping, answers: ImportAnswers = {}) {
   const table = readCsv(text);
   if (kind === "rates") {
     const { data } = await t.supabase
@@ -54,14 +64,14 @@ async function plan(t: Tenant, kind: Kind, text: string, mapping: Mapping) {
       .select("code, item, unit, category, status, notes, rate_ex_vat")
       .eq("company_id", t.company.id);
     const existing = (data ?? []).map((r) => ({ ...r, rate_ex_vat: r.rate_ex_vat == null ? null : Number(r.rate_ex_vat) }));
-    return { table, ...planRates(table, mapping, existing, t.company.vat_rate) };
+    return { table, ...planRates(table, mapping, existing, t.company.vat_rate, answers) };
   }
   const { data } = await t.supabase
     .from("customers")
     .select("id, name, company_name, emails, phones, address, postcode, notes, invoice_email, payment_terms, tags")
     .eq("company_id", t.company.id)
     .is("archived_at", null);
-  return { table, ...planCustomers(table, mapping, (data ?? []) as ExistingCustomer[]) };
+  return { table, questions: [] as ImportQuestion[], ...planCustomers(table, mapping, (data ?? []) as ExistingCustomer[]) };
 }
 
 function checkMapping(kind: Kind, mapping: Mapping, headerCount: number): Mapping {
@@ -85,7 +95,9 @@ export async function previewImport(raw: unknown): Promise<PreviewResult> {
     if (headers.length < 2 || rows.length === 0) return { ok: false, error: "That file has no rows, or isn't a CSV with a header row." };
     const mapping = checkMapping(kind, parsed.data.mapping ?? suggestMapping(kind, headers), headers.length);
     const missing = missingRequired(kind, mapping);
-    const result = missing.length ? { preview: [] as PreviewRow[] } : await plan(t, kind, text, mapping);
+    const result = missing.length
+      ? { preview: [] as PreviewRow[], questions: [] as ImportQuestion[] }
+      : await plan(t, kind, text, mapping, parsed.data.answers);
     return {
       ok: true,
       headers,
@@ -94,6 +106,7 @@ export async function previewImport(raw: unknown): Promise<PreviewResult> {
       missing,
       rows: result.preview,
       summary: summarise(result.preview),
+      questions: result.questions,
       truncated: rows.length > MAX_ROWS,
     };
   } catch (e) {
@@ -122,7 +135,7 @@ export async function applyImport(raw: unknown): Promise<{ ok: true; batchId: st
     const { headers } = readCsv(text);
     const mapping = checkMapping(kind, parsed.data.mapping, headers.length);
     if (missingRequired(kind, mapping).length) return { ok: false, error: "Match the required columns first." };
-    const result = await plan(t, kind, text, mapping);
+    const result = await plan(t, kind, text, mapping, parsed.data.answers);
     if (result.items.length === 0) return { ok: false, error: "Nothing to import: every row is unchanged or has an error." };
 
     const totals = summarise(result.preview);

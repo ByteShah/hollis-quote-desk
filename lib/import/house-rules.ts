@@ -13,9 +13,28 @@ export type RuleRate = {
   modifiers: { id: string; label: string; amount: number; per: "unit" | "flat" }[];
   included_in: string[];
   site_visit_reason: string | null;
+  load_size?: number | null;
+  import_notes?: string;
 };
 
 export type RuleRow = { value: RuleRate; warnings: string[]; explicitStatus: boolean };
+
+// Some calls can't be made from the file at all ("is this per load? how big
+// is a load?"). Instead of guessing, the preview asks the person importing,
+// and their answers are applied in the same import.
+export type ImportQuestion =
+  | { id: string; kind: "load_size"; code: string; item: string; note: string }
+  | { id: string; kind: "also_included_in"; code: string; item: string; parent: string; options: { code: string; item: string }[] };
+
+/** Question id → answer: m³ in a load, "listed" (keep the unit as listed), or extra codes. */
+export type ImportAnswers = Record<string, number | "listed" | string[]>;
+
+const codePrefix = (code: string) => code.match(/^[A-Z]+/i)?.[0].toUpperCase() ?? "";
+
+function noteAnswer(r: RuleRow, text: string) {
+  r.warnings.push(text);
+  r.value.import_notes = [r.value.import_notes, `Answered at import: ${text}`].filter(Boolean).join(" ");
+}
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "extra";
@@ -42,10 +61,31 @@ export function extrasFromNotes(notes: string | null, unit: string): RuleRate["m
   return out;
 }
 
-export function applyHouseRules(rows: RuleRow[]): void {
+export function applyHouseRules(rows: RuleRow[], answers: ImportAnswers = {}): ImportQuestion[] {
+  const questions: ImportQuestion[] = [];
   for (const r of rows) {
     const v = r.value;
     const notes = v.notes ?? "";
+
+    // "think this is per load not per m3?? check": ask how it's priced. An
+    // answer settles the doubt, so the "??" rule below doesn't apply.
+    let answered = false;
+    if (/\bper load\b/i.test(notes) && v.unit !== "load" && v.price != null && v.status !== "archived") {
+      const id = `load:${v.code}`;
+      questions.push({ id, kind: "load_size", code: v.code, item: v.item, note: notes });
+      const a = answers[id];
+      if (typeof a === "number" && a > 0) {
+        v.unit = "load";
+        v.load_size = a;
+        if (!r.explicitStatus) v.status = "active";
+        noteAnswer(r, `priced per load of ${a} m³ (part loads charged as full).`);
+        answered = true;
+      } else if (a === "listed") {
+        if (!r.explicitStatus) v.status = "active";
+        noteAnswer(r, `priced per ${v.unit} as listed.`);
+        answered = true;
+      }
+    }
 
     const extras = extrasFromNotes(v.notes, v.unit);
     if (extras.length && !v.modifiers.length) {
@@ -72,7 +112,7 @@ export function applyHouseRules(rows: RuleRow[]): void {
       r.warnings.push(`The note says it's usually included in ${parent}, so it's never charged on the same quote as ${parent}. It can still be quoted on its own.`);
       continue;
     }
-    if (/\?\?|\bcheck\b/i.test(notes) && v.status === "active") {
+    if (/\?\?|\bcheck\b/i.test(notes) && v.status === "active" && !answered) {
       v.status = "price_on_request";
       r.warnings.push("The note asks for this price to be checked, so it won't be used on quotes until someone confirms it.");
     }
@@ -105,4 +145,25 @@ export function applyHouseRules(rows: RuleRow[]): void {
     }
     keep.warnings.push(`Kept over possible duplicate${group.length > 2 ? "s" : ""} ${group.filter((g) => g !== keep).map((g) => g.value.code).join(", ")}.`);
   }
+
+  // "Included in BP01": is it also included in BP01's siblings (same code
+  // prefix and unit, still in use), such as BP03 lay-only?
+  for (const r of rows) {
+    const parent = r.value.included_in[0];
+    if (!parent) continue;
+    const p = rows.find((x) => x.value.code === parent);
+    const options = rows
+      .filter((x) => x !== r && x.value.code !== parent && x.value.status === "active" && codePrefix(x.value.code) === codePrefix(parent) && (!p || x.value.unit === p.value.unit))
+      .map((x) => ({ code: x.value.code, item: x.value.item }));
+    if (!options.length) continue;
+    const id = `incl:${r.value.code}`;
+    questions.push({ id, kind: "also_included_in", code: r.value.code, item: r.value.item, parent, options });
+    const a = answers[id];
+    if (Array.isArray(a)) {
+      const extra = options.map((o) => o.code).filter((c) => a.includes(c));
+      r.value.included_in = [parent, ...extra];
+      noteAnswer(r, extra.length ? `also included in ${extra.join(", ")}.` : `only included in ${parent}.`);
+    }
+  }
+  return questions;
 }
