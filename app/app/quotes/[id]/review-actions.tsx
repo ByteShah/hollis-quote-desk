@@ -146,6 +146,9 @@ export function CustomerPicker({
     <div className="relative">
       <select
         id="customer"
+        // Stops the browser restoring an old choice on back/reload, which
+        // React doesn't correct after hydration.
+        autoComplete="off"
         className="input appearance-none pr-8"
         value={current ?? ""}
         disabled={pending}

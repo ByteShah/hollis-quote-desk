@@ -23,6 +23,7 @@ import {
 import { getTenant } from "@/lib/tenant";
 import type { Exclusion, Flag, QuoteLine } from "@/lib/quote/build";
 import type { CustomerMatch } from "@/lib/customers/match";
+import type { AiLine } from "@/lib/ai/schema";
 import { Badge, Card, LinkButton, Skeleton, cn } from "@/components/ui";
 import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
 import { ReviewActions, CustomerPicker } from "./review-actions";
@@ -107,6 +108,12 @@ export default async function QuotePage({
     ? (quote.ai_raw as { usage: { input: number; cached: number; output: number }; items_offered: number; items_total: number })
     : null;
   const exclusions = quote.exclusions as Exclusion[];
+  // On a site-visit job nothing is priced, but what the AI thought the job
+  // needs is a useful starting point for the visit.
+  const proposed =
+    quote.outcome === "needs_site_visit" && lines.length === 0
+      ? (((quote.ai_raw as { output?: { lines?: AiLine[] } } | null)?.output?.lines ?? []) as AiLine[])
+      : [];
   const editable = quote.status !== "approved";
   const view = (["preview", "notes", "email", "history"] as const).find((t) => t === tab) ?? "lines";
   const preview = view === "preview";
@@ -227,6 +234,32 @@ export default async function QuotePage({
                     checks={checks}
                   />
                 </Card>
+
+                {proposed.length > 0 && (
+                  <Card title="For the site visit (not priced)" icon={MapPin} action={<span className="text-xs text-muted">What the AI thinks the job involves</span>}>
+                    <ul className="divide-y divide-line/70">
+                      {proposed.map((l, i) => {
+                        const rate = rates?.find((r) => r.code === l.rate_code);
+                        const qty =
+                          l.stated_quantity != null
+                            ? `about ${l.stated_quantity.toLocaleString("en-GB")} ${l.stated_unit === "m2" ? "m²" : l.stated_unit ?? ""}`
+                            : l.dimensions.length
+                              ? l.dimensions.map((d) => `${d.value} ${d.unit}`).join(" × ")
+                              : null;
+                        return (
+                          <li key={i} className="py-3 first:pt-0 last:pb-0">
+                            <div className="flex flex-wrap items-center gap-2 text-sm">
+                              <span className="font-mono text-xs font-medium">{l.rate_code}</span>
+                              <span className="font-medium">{rate?.item ?? ""}</span>
+                              {qty && <span className="text-[13px] text-muted">{qty}</span>}
+                            </div>
+                            <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{l.reasoning}</p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </Card>
+                )}
 
                 {exclusions.length > 0 && (
                   <Card title="Not included in the price" icon={Ban}>
