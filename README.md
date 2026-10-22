@@ -162,7 +162,7 @@ My own assumptions:
 
 ```bash
 cp .env.example .env.local      # Supabase URL/keys, KEY_ENCRYPTION_SECRET (openssl rand -base64 32), SEED_PASSWORD
-supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0022)
+supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0023)
 npm install
 npm run seed                    # companies, logins, platform admin, Hollis price list and customers
 npm run dev
