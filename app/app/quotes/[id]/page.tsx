@@ -115,10 +115,34 @@ export default async function QuotePage({
       ? (((quote.ai_raw as { output?: { lines?: AiLine[] } } | null)?.output?.lines ?? []) as AiLine[])
       : [];
   const editable = quote.status !== "approved";
+  // A site visit with nothing priced: lead with what to look at, not an empty table.
+  const visitFirst = quote.outcome === "needs_site_visit" && lines.length === 0;
+  // Offer to price the AI's lines only when no company rule required the visit.
+  // (No rule warning like "over the 150 m² limit" or "TM02 needs a site visit"
+  // means the AI alone decided; this also covers drafts made before that note existed.)
+  const aiOnlyVisit = visitFirst && !flags.some((f) => /needs a site visit:|limit for quoting off an email/.test(f.message));
   const view = (["preview", "notes", "email", "history"] as const).find((t) => t === tab) ?? "lines";
   const preview = view === "preview";
   const ref = quoteRef(quote.number);
   const totals = { subtotal: Number(quote.subtotal), vat: Number(quote.vat), total: Number(quote.total) };
+
+  const linesCard = (
+    <Card
+      title={visitFirst ? "Price it after the visit" : "Line items"}
+      icon={ClipboardList}
+      action={<span className="text-xs text-muted">All prices ex VAT</span>}
+    >
+      <LinesEditor
+        quoteId={id}
+        editable={editable}
+        initial={lines}
+        rates={(rates ?? []).map((r) => ({ ...r, rate_ex_vat: Number(r.rate_ex_vat) }))}
+        pricing={{ vat_rate: company.vat_rate, min_charge: company.min_charge }}
+        saved={totals}
+        checks={checks}
+      />
+    </Card>
+  );
 
   const TABS = [
     { key: "lines", label: "Quote", icon: ListChecks },
@@ -223,23 +247,13 @@ export default async function QuotePage({
           <div className="min-w-0 space-y-5">
             {view === "lines" && (
               <>
-                <Card title="Line items" icon={ClipboardList} action={<span className="text-xs text-muted">All prices ex VAT</span>}>
-                  <LinesEditor
-                    quoteId={id}
-                    editable={editable}
-                    initial={lines}
-                    rates={(rates ?? []).map((r) => ({ ...r, rate_ex_vat: Number(r.rate_ex_vat) }))}
-                    pricing={{ vat_rate: company.vat_rate, min_charge: company.min_charge }}
-                    saved={totals}
-                    checks={checks}
-                  />
-                </Card>
+                {!visitFirst && linesCard}
 
                 {proposed.length > 0 && (
                   <Card
                     title="For the site visit (not priced)"
                     icon={MapPin}
-                    action={editable ? <PriceProposedButton quoteId={id} /> : <span className="text-xs text-muted">What the AI thinks the job involves</span>}
+                    action={editable && aiOnlyVisit ? <PriceProposedButton quoteId={id} /> : <span className="text-xs text-muted">What the AI thinks the job involves</span>}
                   >
                     <ul className="divide-y divide-line/70">
                       {proposed.map((l, i) => {
@@ -283,6 +297,7 @@ export default async function QuotePage({
                     </ul>
                   </Card>
                 )}
+                {visitFirst && linesCard}
               </>
             )}
 
