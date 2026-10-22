@@ -34,7 +34,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
   const [{ data: rateRows, error: rErr }, { data: customerRows, error: cErr }] = await Promise.all([
     supabase
       .from("rates_current")
-      .select("code, item, unit, category, rate_ex_vat, status, notes, modifiers, price_since, last_reviewed_at")
+      .select("code, item, unit, category, rate_ex_vat, status, notes, modifiers, price_since, last_reviewed_at, load_size, included_in, site_visit_reason")
       .eq("company_id", company.id)
       .neq("status", "archived"),
     supabase
@@ -48,6 +48,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
   const rates: Rate[] = (rateRows ?? []).map((r) => ({
     ...r,
     rate_ex_vat: r.rate_ex_vat == null ? null : Number(r.rate_ex_vat),
+    load_size: r.load_size == null ? null : Number(r.load_size),
   }));
   const customers = (customerRows ?? []) as CustomerRecord[];
 

@@ -27,15 +27,22 @@ describe("rates import", () => {
     expect(get("PT01").rate_ex_vat).toBe(70.83);
   });
 
-  it("does not use doubtful or unpriced rows", () => {
-    expect(get("CO02").status).toBe("price_on_request");
+  it("applies Dave and Shaz's answers", () => {
+    // C30 concrete: £1,250 per load of about 6 m³.
+    expect(get("CO02")).toMatchObject({ status: "active", unit: "load", load_size: 6, rate_ex_vat: 1250 });
+    // Sand is in BP01, but can be charged alone for re-sanding.
+    expect(get("BP04")).toMatchObject({ status: "active", included_in: ["BP01", "BP03"] });
+    for (const c of ["TM02", "TM03", "DR03"]) expect(get(c).site_visit_reason).toBeTruthy();
+  });
+
+  it("does not use unpriced rows", () => {
     expect(get("TM03").status).toBe("price_on_request");
     expect(get("TM03").rate_ex_vat).toBeNull();
     expect(get("KB04").status).toBe("not_offered");
   });
 
   it("supersedes old and duplicate prices", () => {
-    for (const c of ["BP02", "SB02", "KB02", "EX06", "BP04"]) expect(get(c).status).toBe("archived");
+    for (const c of ["BP02", "SB02", "KB02", "EX06"]) expect(get(c).status).toBe("archived");
     // The minimum charge is applied by code, so the AI must never see it as an item.
     expect(get("MI01").status).toBe("archived");
     for (const c of ["BP01", "SB03", "KB01", "EX05"]) expect(get(c).status).toBe("active");

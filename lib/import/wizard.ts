@@ -65,6 +65,8 @@ export type CleanRate = {
   effective_from: string | null;
   import_notes: string;
   modifiers: { id: string; label: string; amount: number; per: "unit" | "flat" }[];
+  included_in: string[];
+  site_visit_reason: string | null;
 };
 
 export type ExistingRate = {
@@ -175,6 +177,8 @@ export function cleanRateRow(
       effective_from: eff === "invalid" ? null : eff,
       import_notes: notesIn.join(" "),
       modifiers: [],
+      included_in: [],
+      site_visit_reason: null,
     },
   };
 }

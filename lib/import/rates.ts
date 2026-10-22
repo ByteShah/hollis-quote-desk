@@ -11,6 +11,9 @@ export type RateDecision = {
   rate_ex_vat?: number | null;
   unit?: CanonicalUnit;
   modifiers?: RateModifier[];
+  load_size?: number;
+  included_in?: string[];
+  site_visit_reason?: string;
   reason: string;
 };
 
@@ -95,6 +98,9 @@ export function parseRatesCsv(
       if (d.rate_ex_vat !== undefined) rate.rate_ex_vat = d.rate_ex_vat;
       if (d.unit) rate.unit = d.unit;
       if (d.modifiers) rate.modifiers = d.modifiers;
+      if (d.load_size) rate.load_size = d.load_size;
+      if (d.included_in) rate.included_in = d.included_in;
+      if (d.site_visit_reason) rate.site_visit_reason = d.site_visit_reason;
       rate.import_notes.push(`Decision: ${d.reason}`);
     }
     if (rate.status === "active" && rate.rate_ex_vat == null) rate.status = "price_on_request";

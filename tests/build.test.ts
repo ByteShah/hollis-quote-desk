@@ -32,6 +32,9 @@ const rates: Rate[] = [
   { code: "KB04", item: "Dropped kerb", unit: "each", rate_ex_vat: null, status: "not_offered", notes: "council", modifiers: [] },
   { code: "TM03", item: "Resin", unit: "m2", rate_ex_vat: null, status: "price_on_request", notes: "ask Dave", modifiers: [] },
   { code: "TM01", item: "Tarmac", unit: "m2", rate_ex_vat: 55, status: "active", notes: null, modifiers: [] },
+  { code: "BP04", item: "Kiln dried sand", unit: "m2", rate_ex_vat: 1.8, status: "active", notes: null, modifiers: [], included_in: ["BP01"] },
+  { code: "CO02", item: "Concrete C30", unit: "load", rate_ex_vat: 1250, status: "active", notes: null, modifiers: [], load_size: 6 },
+  { code: "DR03", item: "Soakaway", unit: "each", rate_ex_vat: 620, status: "active", notes: null, modifiers: [], site_visit_reason: "Depends on a perc test." },
 ];
 
 const line = (o: Partial<AiLine>): AiLine => ({
@@ -137,6 +140,38 @@ describe("buildQuote", () => {
     const q = buildQuote(draft({ lines: [line({ stated_quantity: 50 })] }), rates, company, enquiry);
     expect(q.flags.some((f) => f.level === "danger")).toBe(true);
     expect(q.lines[0].unit_rate).toBe(14.5);
+  });
+});
+
+describe("rules from Dave and Shaz's answers", () => {
+  it("charges concrete in whole loads, a part load as full", () => {
+    const q = buildQuote(draft({ lines: [line({ rate_code: "CO02", stated_quantity: 7, stated_unit: "m3" })] }), rates, company, "");
+    expect(q.lines[0]).toMatchObject({ qty: 2, unit_rate: 1250, line_total: 2500 });
+    const dims = buildQuote(
+      draft({ lines: [line({ rate_code: "CO02", quantity_source: "dimensions", dimensions: [{ value: 5, unit: "m" }, { value: 4, unit: "m" }, { value: 0.1, unit: "m" }] })] }),
+      rates, company, "",
+    );
+    expect(dims.lines[0].qty).toBe(1);
+  });
+
+  it("never charges sand on top of block paving, but does on its own", () => {
+    const both = buildQuote(draft({ lines: [line({ rate_code: "BP01", stated_quantity: 20 }), line({ rate_code: "BP04", stated_quantity: 20 })] }), rates, company, "");
+    expect(both.lines.map((l) => l.rate_code)).toEqual(["BP01"]);
+    expect(both.flags.some((f) => /BP04 removed/.test(f.message))).toBe(true);
+    const alone = buildQuote(draft({ lines: [line({ rate_code: "BP04", stated_quantity: 100 })] }), rates, company, "");
+    expect(alone.lines[0].rate_code).toBe("BP04");
+  });
+
+  it("sends soakaways for a site visit with no price", () => {
+    const q = buildQuote(draft({ lines: [line({ rate_code: "DR03", stated_quantity: 1, stated_unit: "each" })] }), rates, company, "");
+    expect(q.outcome).toBe("needs_site_visit");
+    expect(q.total).toBe(0);
+    expect(q.flags.some((f) => /perc test/.test(f.message))).toBe(true);
+  });
+
+  it("reminds the reviewer about a skip permit that wasn't added", () => {
+    const q = buildQuote(draft({ lines: [line({ rate_code: "PL01", stated_quantity: 1, stated_unit: "each" })] }), rates, company, "");
+    expect(q.flags.some((f) => /Road permit.*not added/.test(f.message))).toBe(true);
   });
 });
 

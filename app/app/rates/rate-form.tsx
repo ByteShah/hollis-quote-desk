@@ -17,6 +17,9 @@ export type RateFormValues = {
   status: "active" | "price_on_request" | "not_offered";
   notes: string;
   modifiers: Modifier[];
+  load_size: string;
+  included_in: string;
+  site_visit_reason: string;
   price?: string;
 };
 
@@ -228,6 +231,29 @@ export function RateForm({
           </ul>
         )}
       </div>
+
+      <fieldset className="space-y-4">
+        <legend className="label">Quoting rules</legend>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {v.unit === "load" && (
+            <div>
+              <label className="label" htmlFor="load_size">One load holds (m³)</label>
+              <input id="load_size" className="input num" type="number" min="0" step="0.1" inputMode="decimal" value={v.load_size} onChange={(e) => set("load_size", e.target.value)} disabled={disabled} placeholder="e.g. 6" />
+              <p className="mt-1 text-xs text-muted">Volumes are rounded up to whole loads; a part load is charged as full.</p>
+            </div>
+          )}
+          <div>
+            <label className="label" htmlFor="included_in">Already included in</label>
+            <input id="included_in" className="input font-mono uppercase" value={v.included_in} onChange={(e) => set("included_in", e.target.value.toUpperCase())} disabled={disabled} maxLength={200} placeholder="e.g. BP01, BP03" />
+            <p className="mt-1 text-xs text-muted">Never charged on the same quote as these items.</p>
+          </div>
+        </div>
+        <div>
+          <label className="label" htmlFor="site_visit_reason">Needs a site visit because</label>
+          <input id="site_visit_reason" className="input" value={v.site_visit_reason} onChange={(e) => set("site_visit_reason", e.target.value)} disabled={disabled} maxLength={300} placeholder="Leave empty if this can be priced from an email" />
+          <p className="mt-1 text-xs text-muted">Any quote that uses this item goes for a site visit, with no price.</p>
+        </div>
+      </fieldset>
 
       {!readOnly && (dirty || mode === "create") && (
         <div className="sticky bottom-4 z-10 flex items-center gap-3 rounded-xl border border-line bg-ink px-4 py-2.5 text-sm text-white shadow-(--shadow-pop) animate-rise">

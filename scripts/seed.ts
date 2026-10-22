@@ -30,13 +30,18 @@ if (!url || !serviceKey || !password) {
 const db = createClient(url, serviceKey, { auth: { persistSession: false } });
 const root = path.join(__dirname, "..");
 
-const HOLLIS_RULES = `- Prices are always ex VAT; the system adds VAT.
-- We are NOT a council-approved contractor: we never do dropped kerbs / vehicle crossovers. Tell the customer to apply to the council.
-- Car parks and large commercial jobs: Dave must visit. Never price these from an email.
+const HOLLIS_RULES = `- Prices are always ex VAT; the system adds VAT at 20% and shows it separately. The minimum charge is £450 + VAT.
+- Car parks and anything commercial: Dave must see it. Outcome needs_site_visit, no price.
+- Anything over about 150 m2 needs a visit too.
+- We don't do dropped kerbs / vehicle crossovers. Tell the customer to go to the council.
+- Resin bound surfacing always goes to Dave (supplier price changes). Soakaways depend on a perc test and tarmac overlays need a sound base: these need a site visit.
 - Plumbing, electrics, fencing and building work are outside our trade.
-- Excavated material has to go somewhere: include muck away (EX05 per 8-wheeler load, about 10 m3 loose) or a skip (PL01) for jobs that dig out.
-- A skip that has to go on the road needs the road_permit modifier on PL01.
-- Block paving pattern: only add the herringbone modifier if the customer asks for herringbone or to match an existing herringbone drive; otherwise ask.`;
+- Excavated material has to go somewhere: include muck away (EX05, per 8-wheeler load of about 10 m3 loose) or a skip (PL01) for jobs that dig out.
+- Skip permit (road_permit on PL01) only when the skip goes on the road. If it fits on the drive there's no permit. If the enquiry doesn't say, leave it off and ask.
+- Herringbone is optional: only add it when the customer asks for herringbone. If they want to match an existing drive and don't say the pattern, ask.
+- Kiln-dried sand is included in block paving (BP01). BP04 is only for re-sanding jobs with no new blocks.
+- Concrete C30 (CO02) is £1,250 per load of about 6 m3; give the volume and the system rounds up to whole loads.
+`;
 
 const CHASE_RULES = `- Prices are always ex VAT; the system adds VAT.
 - We are a soft-landscaping firm: turf, planting, fencing, decking, sleepers, gravel.
@@ -102,6 +107,9 @@ async function loadRates(companyId: string, rates: Partial<ImportedRate>[]) {
         last_reviewed_at: new Date().toISOString(),
         notes: r.notes,
         modifiers: r.modifiers ?? [],
+        load_size: r.load_size ?? null,
+        included_in: r.included_in ?? [],
+        site_visit_reason: r.site_visit_reason ?? null,
         import_notes: r.import_notes?.join(" ") || null,
         source_row: r.source_row ?? null,
       })),

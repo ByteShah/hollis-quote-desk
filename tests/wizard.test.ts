@@ -34,10 +34,18 @@ describe("rates import", () => {
   it("reaches the same decisions as the hand-checked Hollis import, on its own", () => {
     const plan = planRates(table, mapping, [], 0.2);
     const seeded = parseRatesCsv(brief("02-rates.csv"), { vatRate: 0.2, decisions: HOLLIS_RATE_DECISIONS });
-    for (const s of seeded) {
+    // CO02's note asks for a check; only Dave's answer (per load) could settle
+    // it, so the importer holds it back for a person instead.
+    for (const s of seeded.filter((s) => s.code !== "CO02")) {
       const got = plan.items.find((i) => i.code === s.code)!;
-      expect({ code: s.code, status: got.status }).toEqual({ code: s.code, status: s.status });
+      expect({ code: s.code, status: got.status, visit: !!got.site_visit_reason }).toEqual({
+        code: s.code,
+        status: s.status,
+        visit: !!s.site_visit_reason,
+      });
     }
+    expect(plan.items.find((i) => i.code === "CO02")!.status).toBe("price_on_request");
+    expect(plan.items.find((i) => i.code === "BP04")!.included_in).toEqual(["BP01"]);
     const bp01 = plan.items.find((i) => i.code === "BP01")!;
     expect(bp01.modifiers).toEqual([{ id: "herringbone", label: "Herringbone", amount: 4, per: "unit" }]);
     const pl01 = plan.items.find((i) => i.code === "PL01")!;

@@ -11,6 +11,8 @@ export type RuleRate = {
   notes: string | null;
   price: number | null;
   modifiers: { id: string; label: string; amount: number; per: "unit" | "flat" }[];
+  included_in: string[];
+  site_visit_reason: string | null;
 };
 
 export type RuleRow = { value: RuleRate; warnings: string[]; explicitStatus: boolean };
@@ -50,6 +52,12 @@ export function applyHouseRules(rows: RuleRow[]): void {
       v.modifiers = extras;
       r.warnings.push(`Extras read from the note: ${extras.map((e) => `${e.label} +£${e.amount}${e.per === "unit" ? `/${v.unit}` : " per job"}`).join(", ")}.`);
     }
+    // "subject to perc test", "existing base must be sound", "ask Dave": the
+    // job has to be looked at before it's priced.
+    if (/\bsubject to\b|\bmust be\b|\bask [A-Z][a-z]+/.test(notes) && v.status !== "not_offered" && !v.site_visit_reason) {
+      v.site_visit_reason = `Note on the price list: "${notes}".`;
+      r.warnings.push("The note says this needs checking on site, so a quote using it goes for a site visit.");
+    }
     if (r.explicitStatus) continue;
 
     if (/minimum charge/i.test(v.item) && v.status === "active") {
@@ -59,8 +67,9 @@ export function applyHouseRules(rows: RuleRow[]): void {
     }
     const included = notes.match(/included in\s+([A-Z]{1,4}\d{1,4})/i);
     if (included && v.status === "active") {
-      v.status = "archived";
-      r.warnings.push(`The note says it's usually included in ${included[1].toUpperCase()}, so it's archived and won't be charged twice. Restore it if you sometimes charge it separately.`);
+      const parent = included[1].toUpperCase();
+      v.included_in = [parent];
+      r.warnings.push(`The note says it's usually included in ${parent}, so it's never charged on the same quote as ${parent}. It can still be quoted on its own.`);
       continue;
     }
     if (/\?\?|\bcheck\b/i.test(notes) && v.status === "active") {

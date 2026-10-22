@@ -55,6 +55,9 @@ export default async function RatePage({ params }: { params: Promise<{ id: strin
     status: archived ? "active" : r.status,
     notes: r.notes ?? "",
     modifiers: (r.modifiers as { label: string; amount: number; per: "unit" | "flat" }[]).map(({ label, amount, per }) => ({ label, amount, per })),
+    load_size: r.load_size == null ? "" : String(r.load_size),
+    included_in: ((r.included_in as string[] | null) ?? []).join(", "),
+    site_visit_reason: r.site_visit_reason ?? "",
   };
 
   return (

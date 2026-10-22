@@ -27,6 +27,13 @@ const fields = z.object({
   status: z.enum(EDITABLE_STATUS),
   notes: z.string().trim().max(1000).transform((v) => v || null),
   modifiers: z.array(modifier).max(10),
+  load_size: z.union([z.literal(""), z.coerce.number().positive("Load size must be more than 0.").max(1000)]).transform((v) => (v === "" ? null : v)),
+  included_in: z
+    .string()
+    .max(200)
+    .transform((v) => [...new Set(v.toUpperCase().split(/[\s,]+/).filter(Boolean))])
+    .pipe(z.array(z.string().regex(/^[A-Z0-9][A-Z0-9_-]{0,19}$/, "List item codes separated by commas.")).max(20)),
+  site_visit_reason: z.string().trim().max(300).transform((v) => v || null),
 });
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "extra";
@@ -61,6 +68,7 @@ export async function createRate(input: unknown): Promise<ActionResult<{ id: str
       .safeParse(input);
     if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
     const { code, price, modifiers, ...rest } = parsed.data;
+    if (rest.unit !== "load") rest.load_size = null;
     const hasPrice = typeof price === "number";
     if (rest.status === "active" && !hasPrice) return { ok: false, error: "An item that's in use needs a price." };
 
@@ -107,6 +115,7 @@ export async function updateRate(id: string, version: number, input: unknown): P
     const parsed = fields.safeParse(input);
     if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
     const { modifiers, ...rest } = parsed.data;
+    if (rest.unit !== "load") rest.load_size = null;
 
     const { data: current } = await t.supabase.from("rates_current").select("status, rate_ex_vat").eq("id", id).maybeSingle();
     if (!current) return { ok: false, error: "Item not found." };

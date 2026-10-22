@@ -23,7 +23,7 @@ export default async function NewRatePage() {
       <Card>
         <RateForm
           mode="create"
-          initial={{ code: "", item: "", category: "", unit: "m2", status: "active", notes: "", modifiers: [], price: "" }}
+          initial={{ code: "", item: "", category: "", unit: "m2", status: "active", notes: "", modifiers: [], load_size: "", included_in: "", site_visit_reason: "", price: "" }}
           categories={categories}
           readOnly={false}
         />

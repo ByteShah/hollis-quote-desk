@@ -32,7 +32,8 @@ enquiry text
    │                                                              ▼
    └─► code builds the draft: only items in use with a price in effect today,
        feet/sq ft → metric, quantities from dimensions, prices from the database,
-       extras (herringbone, road permit), minimum charge, VAT, site-visit size limit,
+       extras (herringbone, road permit), whole loads, "included in", site-visit items,
+       minimum charge, VAT, site-visit size limit,
        stale-price warnings
                      │
                      ▼
@@ -100,33 +101,51 @@ Every rule is enforced **in the database** (RLS policies, `has_role()` checks in
 
 ## The messy data
 
-Shaz's CSVs are loaded exactly as sent. The same cleaning rules run in the seed script and in the in-app importer (`lib/import/`). Every Hollis-specific judgement call is written down in `lib/import/hollis-decisions.ts`, listed in [`docs/import-report.md`](docs/import-report.md), and shown on each item's page.
+Shaz's CSVs are loaded exactly as sent. The same cleaning rules run in the seed script and in the in-app importer (`lib/import/`). I sent Dave and Shaz my questions about the price list, and every Hollis-specific decision now follows their answers. Each one is in `lib/import/hollis-decisions.ts` with who confirmed it, listed in [`docs/import-report.md`](docs/import-report.md), and shown on the item's page.
 
 **Rates**
 - The file starts with a byte-order mark; it's stripped.
 - `m2 / sqm / m²` and `lin m / m` are normalised.
 - `"£1,250"` is parsed; `TBC` means no price.
-- PT01 was entered *inc VAT*, so it's stored as £70.83 ex VAT.
-- Old and duplicate prices are **archived** and never offered to the AI:
-  - BP02 and SB02 (the March price SB03 wins).
-  - KB02. KB01 is kept: where unsure, the **higher** price wins, because under-quoting is what Dave can't afford.
-  - EX06.
-- CO02 (£1,250 "per m³, probably per load") is **not used** until Dave confirms.
-- KB04 dropped kerbs are marked **not offered** (refer to the council). TM03 resin has no price ("ask Dave").
-- "Herringbone +£4" and "road permit +£60" became extras the AI can select; code prices them.
-- BP04 (sand, "usually included in BP01??") is archived so it isn't double-charged.
-- MI01 (the £450 minimum as an item) is archived. The app applies the minimum itself as a visible top-up line, so it can't be charged twice.
+- PT01 is the only price entered *inc VAT*. It's stored as £70.83 ex VAT (confirmed by Shaz).
+- Old and duplicate prices are **archived** and never offered to the AI. After the March increase, Shaz confirmed:
+  - SB03, not SB02.
+  - BP01, not BP02.
+  - EX05 per load, not EX06 per tonne.
+  - KB01 at £28/m. KB02 is the same kerb listed twice.
+- **CO02 concrete is £1,250 per load of about 6 m³** (Dave). Items can have a load size: the AI gives the volume, code rounds up to whole loads, and a part load is charged as a full load.
+- **BP04 kiln-dried sand is included in BP01** (Dave). It's still in use for re-sanding jobs. Items can be marked "already included in" other codes, so code removes BP04 from any quote that also has block paving.
+- **Site-visit items:**
+  - TM03 resin (no price; all resin goes to Dave).
+  - DR03 soakaways (they depend on a perc test).
+  - TM02 tarmac overlays (they need a sound base).
+  - Any quote using one of these becomes "site visit needed", with no price and the reason shown.
+- KB04 dropped kerbs are marked **not offered**: tell the customer to go to the council.
+- Extras:
+  - "Herringbone +£4" becomes an extra the AI can select, only when the customer asks for it.
+  - "Road permit +£60" becomes an extra too, only when the skip goes on the road.
+  - Code prices both. If an extra wasn't added, the reviewer gets a reminder, for example "skip permit not added: check whether the skip goes on the road".
+- MI01, the £450 minimum as an item, is archived. The app applies the minimum itself (£450 + VAT) as a visible top-up line, so it can't be charged twice.
+
+**The same rules work on any company's file.** Rules the importer applies automatically, each shown as a warning in the preview:
+- "Included in X" → never charged with X.
+- "Subject to…", "must be…" or "ask Dave" → needs a site visit.
+- "??" or "check" → no price until confirmed.
+- Duplicates → the new or higher price wins.
 
 **Customers:** 13 rows became 9 customers.
 - Merged when they share an email (Sandhu), a phone number (Doyle), a surname and address (Okafor: "14 Linden Ave" = "14 Linden Avenue"), or a surname and company email domain (Hale).
 - Kestrel Row's "send invoices here" and "30 day terms" became structured fields that show on the quote.
 
-## Assumptions
+## Confirmed with Hollis, and remaining assumptions
 
-I sent Dave and Shaz the questions about the price list; these are my defaults until they answer.
-- Quotes are ex VAT, with VAT at 20% shown separately. The £450 minimum applies to the ex-VAT subtotal and shows as a top-up line.
-- Jobs over 150 m², car parks and commercial sites are a site visit, never priced from an email. The size limit is a company setting.
-- Herringbone is only added when the customer asks for it.
+Confirmed by Dave and Shaz:
+- Quotes are ex VAT, with VAT at 20% shown separately. The £450 minimum is before VAT and shows as a top-up line.
+- Car parks, anything commercial, and anything over about 150 m² get "Dave needs to see this", with no price. Resin, soakaways and tarmac overlays get a site visit too. The size limit is a company setting.
+- We don't do dropped kerbs: tell the customer to go to the council.
+- Herringbone only when the customer asks for it. The skip permit only when the skip goes on the road. If the enquiry doesn't say, it's flagged.
+
+My own assumptions:
 - Dug-out material needs disposal (muck away or skip). The AI includes it with its reasoning, and the reviewer can remove it.
 - "Approve" means "OK to send". The app doesn't send emails.
 - A price counts as stale after 6 months (a company setting).
@@ -137,7 +156,7 @@ I sent Dave and Shaz the questions about the price list; these are my defaults u
 
 ```bash
 cp .env.example .env.local      # Supabase URL/keys, KEY_ENCRYPTION_SECRET (openssl rand -base64 32), SEED_PASSWORD
-supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0020)
+supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0021)
 npm install
 npm run seed                    # companies, logins, platform admin, Hollis price list and customers
 npm run dev
@@ -146,7 +165,7 @@ npm run dev
 Then sign in as an owner, open **Settings → AI provider**, and paste an OpenAI or Anthropic key.
 
 **Tests**
-- `npm test`: 62 tests. 40 are unit tests: pricing, units, customer matching, the importer run on Shaz's real files (including proof that it reaches the same decisions as the hand-checked import), price-list narrowing, UK dates and CSV safety. The other 22 test RLS against the live database and run when `.env.local` is present.
+- `npm test`: 67 tests. 45 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that it reaches the same decisions as the hand-checked import), price-list narrowing, UK dates and CSV safety. The other 22 test RLS against the live database and run when `.env.local` is present.
 - `npm run e2e` (with `npm run dev` running): 30 browser steps covering the price list, customers, CSV import and undo, onboarding, roles and lockout. It uses your installed Chrome and cleans up after itself.
 
 ## What I'd do next

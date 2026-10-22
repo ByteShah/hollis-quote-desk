@@ -16,6 +16,12 @@ export type Rate = {
   status: "active" | "archived" | "price_on_request" | "not_offered";
   notes: string | null;
   modifiers: RateModifier[];
+  /** m³ in one load: volumes become whole loads, part loads charged as full. */
+  load_size?: number | null;
+  /** Codes this item is already part of; never charged alongside them. */
+  included_in?: string[];
+  /** Using this item means someone has to see the job first. */
+  site_visit_reason?: string | null;
 };
 
 export type CompanyPricing = { vat_rate: number; min_charge: number; auto_quote_max_m2: number };
@@ -89,6 +95,11 @@ export function buildQuote(
       exclusions.push({ request: rate.item, reason: "not_offered", note: rate.notes ?? "We don't offer this." });
       continue;
     }
+    if (rate.site_visit_reason) {
+      outcome = "needs_site_visit";
+      flags.push({ level: "warning", message: `${rate.code} (${rate.item}) needs a site visit: ${rate.site_visit_reason}` });
+      continue;
+    }
     if (rate.status !== "active" || rate.rate_ex_vat == null) {
       exclusions.push({
         request: rate.item,
@@ -99,7 +110,16 @@ export function buildQuote(
     }
 
     let qty: number;
-    if (l.quantity_source === "dimensions" && l.dimensions.length > 0) {
+    let loadNote = "";
+    if (rate.unit === "load" && rate.load_size) {
+      const loads = loadsFor(l, rate.load_size);
+      if (!loads.ok) {
+        flags.push({ level: "warning", message: `${rate.code}: ${loads.reason}; line dropped, add by hand.` });
+        continue;
+      }
+      qty = loads.qty;
+      loadNote = loads.note;
+    } else if (l.quantity_source === "dimensions" && l.dimensions.length > 0) {
       const r = quantityFromDimensions(l.dimensions, rate.unit);
       if (!r.ok) {
         flags.push({ level: "warning", message: `${rate.code}: couldn't work out quantity (${r.reason}); line dropped, add by hand.` });
@@ -141,7 +161,15 @@ export function buildQuote(
     }
 
     const description = extras.length ? `${rate.item} (${extras.join(", ")})` : rate.item;
-    lines.push(systemLine(rate.code, description, qty, rate.unit, unitRate, "ai", l.reasoning));
+    lines.push(systemLine(rate.code, description, qty, rate.unit, unitRate, "ai", l.reasoning + loadNote));
+
+    // Optional extras the AI didn't add: remind the reviewer they exist.
+    for (const mod of rate.modifiers.filter((m) => !l.modifiers.includes(m.id))) {
+      flags.push({
+        level: "info",
+        message: `${rate.code}: "${mod.label}" (+£${mod.amount}${mod.per === "unit" ? `/${rate.unit}` : ""}) not added. Add it if it applies.`,
+      });
+    }
 
     if (l.quantity_source === "estimate") {
       flags.push({ level: "info", message: `${rate.code}: quantity is an AI estimate; check it. ${l.reasoning}` });
@@ -155,6 +183,17 @@ export function buildQuote(
         level: "warning",
         message: `${rate.code} is ${qty} m², over the ${company.auto_quote_max_m2} m² limit for quoting off an email; needs a site visit.`,
       });
+    }
+  }
+
+  // Items already included in another line on this quote aren't charged twice.
+  const onQuote = new Set(lines.map((l) => l.rate_code).filter(Boolean));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const code = lines[i].rate_code;
+    const parent = code ? byCode.get(code)?.included_in?.find((c) => onQuote.has(c.toUpperCase())) : undefined;
+    if (parent) {
+      flags.push({ level: "info", message: `${code} removed: it's already included in ${parent}.` });
+      lines.splice(i, 1);
     }
   }
 
@@ -183,6 +222,27 @@ export function buildQuote(
   }
 
   return { outcome, exclusions, flags, ...priceLines(lines, company) };
+}
+
+/**
+ * Quantity for an item priced per load of a known size. A volume (three
+ * dimensions or a stated m³) becomes whole loads, rounded up: a part load is
+ * charged as a full one.
+ */
+function loadsFor(l: AiDraft["lines"][number], size: number): { ok: true; qty: number; note: string } | { ok: false; reason: string } {
+  let volume: number | null = null;
+  if (l.quantity_source === "dimensions" && l.dimensions.length > 0) {
+    const r = quantityFromDimensions(l.dimensions, "m3");
+    if (!r.ok) return { ok: false, reason: `couldn't work out the volume (${r.reason})` };
+    volume = r.qty;
+  } else if (l.stated_quantity != null && l.stated_unit) {
+    const c = convertStated(l.stated_quantity, l.stated_unit);
+    if (c?.unit === "load") return { ok: true, qty: Math.ceil(c.value), note: "" };
+    if (c?.unit === "m3") volume = roundQty(c.value);
+  }
+  if (volume == null || !(volume > 0)) return { ok: false, reason: "needs a volume in m³ or a number of loads" };
+  const qty = Math.ceil(volume / size);
+  return { ok: true, qty, note: ` ${volume} m³ at ${size} m³ a load = ${qty} load${qty === 1 ? "" : "s"} (part loads charged as full).` };
 }
 
 function systemLine(
