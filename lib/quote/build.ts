@@ -45,6 +45,12 @@ export type Outcome = AiDraft["outcome"];
 
 export type BuiltQuote = {
   outcome: Outcome;
+  /** What the AI proposed, before code applied the company's rules. */
+  aiOutcome: Outcome;
+  /** Why it's a site visit: "ai", "area:EX01", "item:TM02". Empty when priced. */
+  siteVisitBy: string[];
+  /** Proposed lines code refused, as "CODE:reason". */
+  dropped: string[];
   lines: QuoteLine[];
   exclusions: Exclusion[];
   flags: Flag[];
@@ -84,11 +90,14 @@ export function buildQuote(
   const exclusions: Exclusion[] = draft.excluded_items.map((e) => ({ ...e }));
   const lines: QuoteLine[] = [];
   let outcome: Outcome = draft.outcome;
+  const siteVisitBy: string[] = draft.outcome === "needs_site_visit" ? ["ai"] : [];
+  const dropped: string[] = [];
 
   for (const l of draft.lines) {
     const rate = byCode.get(l.rate_code.trim().toUpperCase());
     if (!rate) {
       flags.push({ level: "warning", message: `AI proposed unknown rate code "${l.rate_code}"; dropped. (${l.reasoning})` });
+      dropped.push(`${l.rate_code.slice(0, 20)}:unknown`);
       continue;
     }
     if (rate.status === "not_offered") {
@@ -97,6 +106,7 @@ export function buildQuote(
     }
     if (rate.site_visit_reason) {
       outcome = "needs_site_visit";
+      siteVisitBy.push(`item:${rate.code}`);
       flags.push({ level: "warning", message: `${rate.code} (${rate.item}) needs a site visit: ${rate.site_visit_reason}` });
       continue;
     }
@@ -115,6 +125,7 @@ export function buildQuote(
       const loads = loadsFor(l, rate.load_size);
       if (!loads.ok) {
         flags.push({ level: "warning", message: `${rate.code}: ${loads.reason}; line dropped, add by hand.` });
+        dropped.push(`${rate.code}:quantity`);
         continue;
       }
       qty = loads.qty;
@@ -123,6 +134,7 @@ export function buildQuote(
       const r = quantityFromDimensions(l.dimensions, rate.unit);
       if (!r.ok) {
         flags.push({ level: "warning", message: `${rate.code}: couldn't work out quantity (${r.reason}); line dropped, add by hand.` });
+        dropped.push(`${rate.code}:quantity`);
         continue;
       }
       qty = r.qty;
@@ -134,12 +146,14 @@ export function buildQuote(
           level: "warning",
           message: `${rate.code}: quantity "${l.stated_quantity ?? "?"} ${l.stated_unit ?? ""}" doesn't fit a per-${rate.unit} rate; line dropped, add by hand.`,
         });
+        dropped.push(`${rate.code}:unit`);
         continue;
       }
       qty = roundQty(conv.value);
     }
     if (!(qty > 0)) {
       flags.push({ level: "warning", message: `${rate.code}: zero quantity; line dropped.` });
+      dropped.push(`${rate.code}:zero`);
       continue;
     }
 
@@ -181,6 +195,7 @@ export function buildQuote(
     }
     if (rate.unit === "m2" && qty > company.auto_quote_max_m2) {
       outcome = "needs_site_visit";
+      siteVisitBy.push(`area:${rate.code}`);
       flags.push({
         level: "warning",
         message: `${rate.code} is ${qty} m², over the ${company.auto_quote_max_m2} m² limit for quoting off an email; needs a site visit.`,
@@ -211,19 +226,27 @@ export function buildQuote(
     });
   }
 
+  const meta = { aiOutcome: draft.outcome, siteVisitBy, dropped };
   if (outcome !== "quote") {
     // Never put a number on a job that needs a site visit or can't be priced.
+    if (outcome === "needs_site_visit" && siteVisitBy.length === 1 && siteVisitBy[0] === "ai") {
+      flags.push({
+        level: "warning",
+        message:
+          "The AI chose a site visit, but none of your site-visit rules apply (size, car park or commercial, or a site-visit item). If you're happy to price it, use the AI's proposed lines below.",
+      });
+    }
     if (lines.length) {
       flags.push({ level: "info", message: `${lines.length} proposed line(s) withheld because this job isn't being priced off the enquiry.` });
     }
-    return { outcome, lines: [], exclusions, flags, subtotal: 0, vat: 0, total: 0 };
+    return { outcome, ...meta, lines: [], exclusions, flags, subtotal: 0, vat: 0, total: 0 };
   }
   if (lines.length === 0) {
     flags.push({ level: "warning", message: "Nothing in this enquiry could be priced from the rates." });
-    return { outcome: "cannot_quote", lines: [], exclusions, flags, subtotal: 0, vat: 0, total: 0 };
+    return { outcome: "cannot_quote", ...meta, lines: [], exclusions, flags, subtotal: 0, vat: 0, total: 0 };
   }
 
-  return { outcome, exclusions, flags, ...priceLines(lines, company) };
+  return { outcome, ...meta, exclusions, flags, ...priceLines(lines, company) };
 }
 
 /**

@@ -175,6 +175,27 @@ describe("rules from Dave and Shaz's answers", () => {
   });
 });
 
+describe("why a draft is a site visit", () => {
+  it("says when only the AI chose it, and keeps the proposed lines for later", () => {
+    const q = buildQuote(draft({ outcome: "needs_site_visit", lines: [line({ rate_code: "EX01", stated_quantity: 20 })] }), rates, company, "");
+    expect(q).toMatchObject({ aiOutcome: "needs_site_visit", outcome: "needs_site_visit", siteVisitBy: ["ai"], total: 0 });
+    expect(q.flags.some((f) => /none of your site-visit rules apply/.test(f.message))).toBe(true);
+  });
+
+  it("names the rule when code forces it, so 'price anyway' can't skip it", () => {
+    const big = buildQuote(draft({ lines: [line({ rate_code: "TM01", stated_quantity: 1200 })] }), rates, company, "");
+    expect(big.siteVisitBy).toEqual(["area:TM01"]);
+    const item = buildQuote(draft({ lines: [line({ rate_code: "DR03", stated_quantity: 1, stated_unit: "each" })] }), rates, company, "");
+    expect(item.siteVisitBy).toEqual(["item:DR03"]);
+    expect(item.flags.some((f) => /none of your site-visit rules/.test(f.message))).toBe(false);
+  });
+
+  it("records lines code refused", () => {
+    const q = buildQuote(draft({ lines: [line({ rate_code: "ZZ99" }), line({ rate_code: "EX01", stated_quantity: 3, stated_unit: "each" })] }), rates, company, "");
+    expect(q.dropped).toEqual(["ZZ99:unknown", "EX01:unit"]);
+  });
+});
+
 describe("priceLines after human edits", () => {
   it("recomputes totals and the minimum line from scratch", () => {
     const first = buildQuote(draft({ lines: [line({ stated_quantity: 10 })] }), rates, company, "");

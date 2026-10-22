@@ -7,6 +7,7 @@ import { buildQuote, type Rate } from "./build";
 import { stalePriceFlags } from "./stale";
 import { categoriesOf, categoryPrompt, narrowRates, needsNarrowing } from "./catalog";
 import type { Tenant } from "@/lib/tenant";
+import { log, since as elapsed } from "@/lib/log";
 
 export const MAX_ENQUIRY_CHARS = 10_000;
 const MAX_QUOTES_PER_MINUTE = 6;
@@ -19,6 +20,9 @@ export class QuoteError extends Error {}
  */
 export async function createDraftQuote(tenant: Tenant, enquiry: string, customerId?: string | null): Promise<string> {
   const { supabase, company, user } = tenant;
+  const t0 = performance.now();
+  const ctx = { company_id: company.id, user_id: user.id };
+  log.info("quote.draft.start", { ...ctx, enquiry_chars: enquiry.length, customer_chosen: !!customerId });
 
   const since = new Date(Date.now() - 60_000).toISOString();
   const { count } = await supabase
@@ -26,7 +30,10 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
     .select("id", { count: "exact", head: true })
     .eq("company_id", company.id)
     .gte("created_at", since);
-  if ((count ?? 0) >= MAX_QUOTES_PER_MINUTE) throw new QuoteError("Too many quotes in the last minute; wait a moment.");
+  if ((count ?? 0) >= MAX_QUOTES_PER_MINUTE) {
+    log.warn("quote.draft.rate_limited", ctx);
+    throw new QuoteError("Too many quotes in the last minute; wait a moment.");
+  }
 
   const creds = await loadAiCredentials(tenant);
   if (!creds) throw new QuoteError("Add your company's AI key in Settings first.");
@@ -43,7 +50,10 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
       .eq("company_id", company.id)
       .is("archived_at", null),
   ]);
-  if (rErr || cErr) throw new QuoteError("Couldn't load your rates and customers.");
+  if (rErr || cErr) {
+    log.error("quote.draft.load_failed", { ...ctx, rates_error: rErr?.code ?? null, customers_error: cErr?.code ?? null });
+    throw new QuoteError("Couldn't load your rates and customers.");
+  }
 
   const rates: Rate[] = (rateRows ?? []).map((r) => ({
     ...r,
@@ -88,6 +98,7 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
     narrowedTo = picked.categories.length ? picked.categories : null;
   }
 
+  const tAi = performance.now();
   const result = await generateDraft({ ...base, system: systemPrompt(company, offered), user: userPrompt(enquiry, customerContext) });
   Object.entries(result.usage).forEach(([k, v]) => (usage[k as keyof Usage] += v));
   const { draft, raw } = result;
@@ -120,16 +131,50 @@ export async function createDraftQuote(tenant: Tenant, enquiry: string, customer
       ai_raw: { output: raw, usage, items_offered: offered.length, items_total: rates.length },
       created_by: user.id,
     })
-    .select("id")
+    .select("id, number")
     .single();
-  if (qErr || !quote) throw new QuoteError("Couldn't save the draft quote.");
+  if (qErr || !quote) {
+    log.error("quote.draft.save_failed", { ...ctx, db_error: qErr?.code ?? null, db_message: qErr?.message ?? null });
+    throw new QuoteError("Couldn't save the draft quote.");
+  }
 
   if (built.lines.length) {
     const { error: lErr } = await supabase
       .from("quote_lines")
       .insert(built.lines.map((l, i) => ({ ...l, quote_id: quote.id, company_id: company.id, position: i })));
-    if (lErr) throw new QuoteError("Couldn't save the quote lines.");
+    if (lErr) {
+      log.error("quote.draft.lines_failed", { ...ctx, quote_id: quote.id, db_error: lErr.code, db_message: lErr.message });
+      throw new QuoteError("Couldn't save the quote lines.");
+    }
   }
+
+  // One line that explains the whole draft: what the AI said, what code did.
+  const levels: Record<string, number> = {};
+  for (const f of built.flags) levels[f.level] = (levels[f.level] ?? 0) + 1;
+  log.info("quote.draft.built", {
+    ...ctx,
+    quote_id: quote.id,
+    number: quote.number,
+    provider: creds.provider,
+    model: creds.model,
+    customer_match: matches[0]?.confidence ?? "none",
+    ai_outcome: built.aiOutcome,
+    outcome: built.outcome,
+    site_visit_by: built.siteVisitBy,
+    ai_lines: draft.lines.map((l) => l.rate_code),
+    priced_lines: built.lines.map((l) => l.rate_code ?? "extra"),
+    dropped: built.dropped,
+    exclusions: built.exclusions.map((e) => e.reason),
+    flags: levels,
+    injection: built.flags.some((f) => f.level === "danger"),
+    items_offered: offered.length,
+    tokens_in: usage.input,
+    tokens_cached: usage.cached,
+    tokens_out: usage.output,
+    total: built.total,
+    ai_ms: elapsed(tAi),
+    ms: elapsed(t0),
+  });
 
   return quote.id;
 }

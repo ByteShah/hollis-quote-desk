@@ -95,7 +95,7 @@ Every rule is enforced **in the database** (RLS policies, `has_role()` checks in
   - Safe post-login redirects.
   - CSV exports neutralise spreadsheet formulas.
   - Security headers (CSP, frame-ancestors none, HSTS, nosniff).
-  - No enquiry text or keys in logs.
+  - Structured JSON logs (`lib/log.ts`) for every draft: one `quote.draft.built` line records the AI's outcome against the final one, why it became a site visit (`ai`, `area:EX01`, `item:TM02`), the proposed, priced and refused lines, token use and timings. Each AI call is logged too, and so is each failure with its stage. Logs never contain enquiry text, customer details or keys.
   - Per-company rate limits on AI calls, imports and invitations.
 - **Tested against the real database** (`tests/rls.test.ts`, 23 tests). Each one signs in as different companies and roles and tries to cross the line: reading, writing, approving, importing, undoing another company's import, reading invitation tokens, changing protected columns, setting or changing quote numbers, and the platform admin reading tenant data.
 
@@ -171,7 +171,7 @@ npm run dev
 Then sign in as an owner, open **Settings → AI provider**, and paste an OpenAI or Anthropic key.
 
 **Tests**
-- `npm test`: 71 tests. 48 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that, with Dave's answers, it reaches exactly the confirmed setup), price-list narrowing, UK dates and CSV safety. The other 23 test RLS against the live database and run when `.env.local` is present.
+- `npm test`: 74 tests. 51 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that, with Dave's answers, it reaches exactly the confirmed setup), price-list narrowing, UK dates and CSV safety. The other 23 test RLS against the live database and run when `.env.local` is present.
 - `npm run e2e` (with `npm run dev` running): 31 browser steps covering the price list, customers, CSV import and undo, importing Shaz's raw file with the importer's questions, onboarding, roles and lockout. It uses your installed Chrome and cleans up after itself.
 
 ## What I'd do next

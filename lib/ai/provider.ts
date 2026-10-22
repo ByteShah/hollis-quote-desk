@@ -2,6 +2,7 @@ import "server-only";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { draftJsonSchema, draftSchema, nullableAsAnyOf, type AiDraft } from "./schema";
+import { log, since } from "@/lib/log";
 
 export type Provider = "openai" | "anthropic";
 
@@ -54,6 +55,7 @@ export async function generateDraft(call: Call): Promise<{ draft: AiDraft; raw: 
     const parsed = draftSchema.safeParse(res.output);
     if (parsed.success) return { draft: parsed.data, raw: res.output, usage };
     lastErr = parsed.error;
+    log.warn("ai.bad_shape", { model: call.model, attempt, issues: parsed.error.issues.slice(0, 5).map((i) => `${i.path.join(".")}: ${i.code}`) });
   }
   throw new AiError(`The AI returned an unexpected format: ${String(lastErr).slice(0, 300)}`);
 }
@@ -89,7 +91,16 @@ function addUsage(total: Usage, u: Usage) {
 }
 
 async function structured(call: Call, spec: Structured): Promise<{ output: unknown; usage: Usage }> {
-  return call.provider === "openai" ? callOpenAI(call, spec) : callAnthropic(call, spec);
+  const t = performance.now();
+  const base = { purpose: spec.name, provider: call.provider, model: call.model };
+  try {
+    const res = call.provider === "openai" ? await callOpenAI(call, spec) : await callAnthropic(call, spec);
+    log.info("ai.call", { ...base, ok: true, ms: since(t), tokens_in: res.usage.input, tokens_cached: res.usage.cached, tokens_out: res.usage.output });
+    return res;
+  } catch (e) {
+    log.warn("ai.call", { ...base, ok: false, ms: since(t), error: (e as Error).message });
+    throw e;
+  }
 }
 
 async function callOpenAI({ apiKey, model, system, user, cacheKey }: Call, spec: Structured) {
@@ -180,6 +191,8 @@ export async function testKey(provider: Provider, apiKey: string, model: string)
 function toAiError(e: unknown): AiError {
   if (e instanceof AiError) return e;
   const status = (e as { status?: number })?.status;
+  // The provider's own error type and status (never its body, which can echo the request).
+  log.warn("ai.provider_error", { status: status ?? null, type: (e as Error)?.name ?? "unknown" });
   if (status === 401 || status === 403) return new AiError("The AI provider rejected this API key.");
   if (status === 404) return new AiError("The AI provider doesn't recognise that model name.");
   if (status === 400) return new AiError("The AI provider rejected the request. Check the model name is a current model that supports structured output.");

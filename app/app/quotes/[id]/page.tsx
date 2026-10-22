@@ -26,7 +26,7 @@ import type { CustomerMatch } from "@/lib/customers/match";
 import type { AiLine } from "@/lib/ai/schema";
 import { Badge, Card, LinkButton, Skeleton, cn } from "@/components/ui";
 import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
-import { ReviewActions, CustomerPicker } from "./review-actions";
+import { ReviewActions, CustomerPicker, PriceProposedButton } from "./review-actions";
 import { QuotePreview } from "./preview";
 import { History } from "@/components/history";
 import { formatDate } from "@/lib/dates";
@@ -236,7 +236,11 @@ export default async function QuotePage({
                 </Card>
 
                 {proposed.length > 0 && (
-                  <Card title="For the site visit (not priced)" icon={MapPin} action={<span className="text-xs text-muted">What the AI thinks the job involves</span>}>
+                  <Card
+                    title="For the site visit (not priced)"
+                    icon={MapPin}
+                    action={editable ? <PriceProposedButton quoteId={id} /> : <span className="text-xs text-muted">What the AI thinks the job involves</span>}
+                  >
                     <ul className="divide-y divide-line/70">
                       {proposed.map((l, i) => {
                         const rate = rates?.find((r) => r.code === l.rate_code);

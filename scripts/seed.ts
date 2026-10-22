@@ -31,7 +31,7 @@ const db = createClient(url, serviceKey, { auth: { persistSession: false } });
 const root = path.join(__dirname, "..");
 
 const HOLLIS_RULES = `- Prices are always ex VAT; the system adds VAT at 20% and shows it separately. The minimum charge is £450 + VAT.
-- Car parks and anything commercial: Dave must see it. Outcome needs_site_visit, no price.
+- Car parks and anything commercial: Dave must see it. Outcome needs_site_visit, no price. "Commercial" means the site (shops, offices, care homes); a landlord's rented house is residential and gets priced.
 - Anything over about 150 m2 needs a visit too.
 - We don't do dropped kerbs / vehicle crossovers. Tell the customer to go to the council.
 - Resin bound surfacing always goes to Dave (supplier price changes). Soakaways depend on a perc test and tarmac overlays need a sound base: these need a site visit.

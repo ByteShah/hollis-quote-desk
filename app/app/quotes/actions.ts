@@ -1,12 +1,14 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { log } from "@/lib/log";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getTenant } from "@/lib/tenant";
 import { createDraftQuote, MAX_ENQUIRY_CHARS, QuoteError } from "@/lib/quote/engine";
 import { AiError } from "@/lib/ai/provider";
-import { MIN_CHARGE_CODE, priceLines, type QuoteLine } from "@/lib/quote/build";
+import { buildQuote, MIN_CHARGE_CODE, priceLines, type Flag, type QuoteLine, type Rate } from "@/lib/quote/build";
+import { draftSchema } from "@/lib/ai/schema";
 
 // History for quotes is written by database triggers (0012_audit_triggers),
 // so none of these actions write to audit_log themselves.
@@ -23,8 +25,11 @@ export async function generateQuote(_prev: string | null, form: FormData): Promi
   try {
     id = await createDraftQuote(tenant, enquiry, customer.data);
   } catch (e) {
-    if (e instanceof QuoteError || e instanceof AiError) return e.message;
-    console.error("generateQuote failed", (e as Error)?.name); // no enquiry text or keys in logs
+    if (e instanceof QuoteError || e instanceof AiError) {
+      log.warn("quote.draft.failed", { company_id: tenant.company.id, kind: e.constructor.name, error: e.message });
+      return e.message;
+    }
+    log.error("quote.draft.crashed", { company_id: tenant.company.id, type: (e as Error)?.name ?? "unknown" }); // no enquiry text or keys in logs
     return "Something went wrong drafting this quote.";
   }
   redirect(`/app/quotes/${id}`);
@@ -76,6 +81,62 @@ export async function saveLines(quoteId: string, payload: unknown): Promise<{ er
     .from("quotes")
     .update({ subtotal: priced.subtotal, vat: priced.vat, total: priced.total, outcome })
     .eq("id", quoteId);
+  revalidatePath(`/app/quotes/${quoteId}`);
+  return {};
+}
+
+/**
+ * The AI sent a job for a site visit that none of the company's rules require.
+ * A reviewer can price the AI's proposed lines instead. The same pricing code
+ * runs, so the real rules (size limit, site-visit items) still apply.
+ */
+export async function priceProposedLines(quoteId: string): Promise<{ error?: string }> {
+  if (!z.uuid().safeParse(quoteId).success) return { error: "Quote not found." };
+  const { supabase, company, user } = await getTenant();
+  const { data: quote } = await supabase.from("quotes").select("id, status, outcome, ai_raw, enquiry_text, flags").eq("id", quoteId).maybeSingle();
+  if (!quote) return { error: "Quote not found." };
+  if (quote.status === "approved") return { error: "Approved quotes can't be edited." };
+  const draft = draftSchema.safeParse((quote.ai_raw as { output?: unknown } | null)?.output);
+  if (!draft.success || !draft.data.lines.length) return { error: "There are no AI proposed lines to price." };
+
+  const { data: rateRows } = await supabase
+    .from("rates_current")
+    .select("code, item, unit, rate_ex_vat, status, notes, modifiers, load_size, included_in, site_visit_reason")
+    .eq("company_id", company.id)
+    .neq("status", "archived");
+  const rates = (rateRows ?? []).map((r) => ({
+    ...r,
+    rate_ex_vat: r.rate_ex_vat == null ? null : Number(r.rate_ex_vat),
+    load_size: r.load_size == null ? null : Number(r.load_size),
+  })) as Rate[];
+
+  const built = buildQuote({ ...draft.data, outcome: "quote" }, rates, company, quote.enquiry_text);
+  if (built.outcome !== "quote") {
+    const why = built.flags.find((f) => /site visit|over the/.test(f.message))?.message ?? "Your rules still require a site visit.";
+    log.info("quote.price_proposed.refused", { company_id: company.id, quote_id: quoteId, site_visit_by: built.siteVisitBy });
+    return { error: why };
+  }
+
+  const { error: delErr } = await supabase.from("quote_lines").delete().eq("quote_id", quoteId);
+  if (delErr) return { error: "Couldn't save changes." };
+  const { error: insErr } = await supabase
+    .from("quote_lines")
+    .insert(built.lines.map((l, i) => ({ ...l, quote_id: quoteId, company_id: company.id, position: i })));
+  if (insErr) return { error: "Couldn't save changes." };
+
+  // Keep the security warning; replace the AI-only site-visit notes with this run's checks.
+  const kept = (quote.flags as Flag[]).filter((f) => f.level === "danger");
+  const flags = [
+    ...kept,
+    { level: "info", message: `Priced from the AI's proposed lines by ${user.email ?? "a reviewer"} instead of a site visit.` },
+    ...built.flags.filter((f) => f.level !== "danger"),
+  ];
+  const { error } = await supabase
+    .from("quotes")
+    .update({ outcome: "quote", subtotal: built.subtotal, vat: built.vat, total: built.total, flags })
+    .eq("id", quoteId);
+  if (error) return { error: "Couldn't save changes." };
+  log.info("quote.price_proposed", { company_id: company.id, quote_id: quoteId, priced_lines: built.lines.map((l) => l.rate_code ?? "extra"), total: built.total });
   revalidatePath(`/app/quotes/${quoteId}`);
   return {};
 }

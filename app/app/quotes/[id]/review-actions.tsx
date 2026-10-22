@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Loader2, Printer, RotateCcw, ShieldAlert, X } from "lucide-react";
+import { Calculator, Check, Loader2, Printer, RotateCcw, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button, cn } from "@/components/ui";
 import { formatGBP } from "@/lib/quote/money";
-import { setCustomer, setStatus } from "../actions";
+import { priceProposedLines, setCustomer, setStatus } from "../actions";
 
 export function ReviewActions({
   quoteId,
@@ -172,5 +172,28 @@ export function CustomerPicker({
       </select>
       {pending && <Loader2 className="absolute right-2.5 top-3 size-4 animate-spin text-muted" />}
     </div>
+  );
+}
+
+/** Turns a site-visit draft into a priced one from the AI's proposed lines. */
+export function PriceProposedButton({ quoteId }: { quoteId: string }) {
+  const [pending, start] = useTransition();
+  const router = useRouter();
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          const res = await priceProposedLines(quoteId);
+          if (res.error) return void toast.error(res.error);
+          toast.success("Priced from the AI's proposed lines");
+          router.refresh();
+        })
+      }
+    >
+      {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Calculator className="size-3.5" />} Price these lines
+    </Button>
   );
 }
