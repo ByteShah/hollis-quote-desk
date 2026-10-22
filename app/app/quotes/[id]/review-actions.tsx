@@ -41,29 +41,32 @@ export function ReviewActions({
       }
     });
 
+  // Laid out for the sidebar: the main action full width, the rest below it.
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button variant="secondary" onClick={() => window.print()} title="Print or save as PDF">
-        <Printer className="size-4" /> Print
-      </Button>
-      {status === "draft" && !canApprove && (
-        <span className="rounded-lg bg-sunken px-3 py-2 text-[13px] text-muted ring-1 ring-line">Waiting for an owner or manager to approve</span>
-      )}
+    <div className="space-y-2">
       {status === "draft" && canApprove && (
-        <>
+        <Button variant="approve" className="w-full" disabled={pending} onClick={() => setConfirming(true)}>
+          <Check className="size-4" /> Approve
+        </Button>
+      )}
+      {status === "draft" && !canApprove && (
+        <p className="rounded-lg bg-sunken px-3 py-2 text-[13px] text-muted ring-1 ring-line">Waiting for an owner or manager to approve</p>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <Button variant="secondary" onClick={() => window.print()} title="Print or save the customer version as PDF" className={cn(!(canApprove && status !== "approved") && "col-span-2")}>
+          <Printer className="size-4" /> Print
+        </Button>
+        {status === "draft" && canApprove && (
           <Button variant="danger" disabled={pending} onClick={() => run("rejected", "Quote rejected")}>
             <X className="size-4" /> Reject
           </Button>
-          <Button variant="approve" disabled={pending} onClick={() => setConfirming(true)}>
-            <Check className="size-4" /> Approve
+        )}
+        {status === "rejected" && canApprove && (
+          <Button variant="secondary" disabled={pending} onClick={() => run("draft", "Quote reopened")}>
+            <RotateCcw className="size-4" /> Reopen
           </Button>
-        </>
-      )}
-      {status === "rejected" && canApprove && (
-        <Button variant="secondary" disabled={pending} onClick={() => run("draft", "Quote reopened")}>
-          <RotateCcw className="size-4" /> Reopen
-        </Button>
-      )}
+        )}
+      </div>
 
       {confirming && (
         <ConfirmDialog onClose={() => !pending && setConfirming(false)}>

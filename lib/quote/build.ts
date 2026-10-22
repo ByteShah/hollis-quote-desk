@@ -238,9 +238,6 @@ export function buildQuote(
           "The AI chose a site visit, but none of your site-visit rules apply (size, car park or commercial, or a site-visit item). If you're happy to price it, use the AI's proposed lines below.",
       });
     }
-    if (lines.length) {
-      flags.push({ level: "info", message: `${lines.length} proposed line(s) withheld because this job isn't being priced off the enquiry.` });
-    }
     return { outcome, ...meta, lines: [], exclusions, flags, subtotal: 0, vat: 0, total: 0 };
   }
   if (lines.length === 0) {

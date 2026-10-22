@@ -28,6 +28,8 @@ import { Badge, Card, LinkButton, Skeleton, cn } from "@/components/ui";
 import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
 import { ReviewActions, CustomerPicker, PriceProposedButton } from "./review-actions";
 import { QuotePreview } from "./preview";
+import { QuoteTabs } from "./quote-tabs";
+import { Checks } from "./checks";
 import { History } from "@/components/history";
 import { formatDate } from "@/lib/dates";
 import { formatGBP } from "@/lib/quote/money";
@@ -95,34 +97,34 @@ export default async function QuotePage({
     note: l.note,
   })) as QuoteLine[];
   const customer = customers?.find((c) => c.id === quote.customer_id) ?? null;
+  const approved = quote.status === "approved";
   const meta = quote.customer_match as { matches?: CustomerMatch[]; outcome_reason?: string };
   const matches = meta.matches ?? [];
-  const flags = dedupeFlags(quote.flags as Flag[]);
-  // "KB01: …" notes also show as a Check marker on that line.
-  const checks: Record<string, string[]> = {};
+  // The site-visit card lists the withheld lines, so that note would only repeat it.
+  const flags = dedupeFlags(quote.flags as Flag[]).filter((f) => !/proposed line\(s\) withheld/.test(f.message));
+  const checked = (quote.checked_flags as string[] | null) ?? [];
+  // "KB01: …" notes still waiting to be checked show as a marker on that line.
+  const lineChecks: Record<string, string[]> = {};
   for (const f of flags) {
-    const code = f.level !== "danger" ? f.message.match(/^([A-Z][A-Z0-9_-]{1,19}):/)?.[1] : undefined;
-    if (code) (checks[code] ??= []).push(f.message.slice(code.length + 1).trim());
+    if (approved || f.level === "danger" || checked.includes(f.message)) continue;
+    const code = f.message.match(/^([A-Z][A-Z0-9_-]{1,19}):/)?.[1];
+    if (code) (lineChecks[code] ??= []).push(f.message.slice(code.length + 1).trim());
   }
   const usage = (quote.ai_raw as { usage?: { input: number; cached: number; output: number }; items_offered?: number; items_total?: number } | null)?.usage
     ? (quote.ai_raw as { usage: { input: number; cached: number; output: number }; items_offered: number; items_total: number })
     : null;
   const exclusions = quote.exclusions as Exclusion[];
-  // On a site-visit job nothing is priced, but what the AI thought the job
-  // needs is a useful starting point for the visit.
-  const proposed =
-    quote.outcome === "needs_site_visit" && lines.length === 0
-      ? (((quote.ai_raw as { output?: { lines?: AiLine[] } } | null)?.output?.lines ?? []) as AiLine[])
-      : [];
-  const editable = quote.status !== "approved";
+  const assumptions = quote.assumptions as string[];
+  const questions = quote.questions as string[];
+  const editable = !approved;
   // A site visit with nothing priced: lead with what to look at, not an empty table.
   const visitFirst = quote.outcome === "needs_site_visit" && lines.length === 0;
+  // What the AI thought the job needs: a starting point for the visit.
+  const proposed = visitFirst ? (((quote.ai_raw as { output?: { lines?: AiLine[] } } | null)?.output?.lines ?? []) as AiLine[]) : [];
   // Offer to price the AI's lines only when no company rule required the visit.
   // (No rule warning like "over the 150 m² limit" or "TM02 needs a site visit"
   // means the AI alone decided; this also covers drafts made before that note existed.)
   const aiOnlyVisit = visitFirst && !flags.some((f) => /needs a site visit:|limit for quoting off an email/.test(f.message));
-  const view = (["preview", "notes", "email", "history"] as const).find((t) => t === tab) ?? "lines";
-  const preview = view === "preview";
   const ref = quoteRef(quote.number);
   const totals = { subtotal: Number(quote.subtotal), vat: Number(quote.vat), total: Number(quote.total) };
 
@@ -139,249 +141,288 @@ export default async function QuotePage({
         rates={(rates ?? []).map((r) => ({ ...r, rate_ex_vat: Number(r.rate_ex_vat) }))}
         pricing={{ vat_rate: company.vat_rate, min_charge: company.min_charge }}
         saved={totals}
-        checks={checks}
+        checks={lineChecks}
       />
     </Card>
   );
 
-  const TABS = [
-    { key: "lines", label: "Quote", icon: ListChecks },
-    { key: "notes", label: "Notes & questions", icon: CircleHelp, count: (quote.assumptions as string[]).length + (quote.questions as string[]).length },
-    { key: "email", label: "Original email", icon: Mail },
-    { key: "history", label: "History", icon: HistoryIcon },
-    { key: "preview", label: "Customer preview", icon: FileText },
-  ] as const;
+  const quotePanel = (
+    <div className="space-y-5">
+      {visitFirst && (
+        <Card
+          title="Site visit needed"
+          icon={MapPin}
+          action={editable && aiOnlyVisit && proposed.length > 0 ? <PriceProposedButton quoteId={id} /> : undefined}
+        >
+          {meta.outcome_reason && <p className="text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>}
+          {proposed.length > 0 && (
+            <>
+              <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                What the AI thinks the job involves (not priced)
+              </div>
+              <ul className="divide-y divide-line/70 rounded-lg ring-1 ring-line">
+                {proposed.map((l, i) => {
+                  const rate = rates?.find((r) => r.code === l.rate_code);
+                  const qty =
+                    l.stated_quantity != null
+                      ? `about ${l.stated_quantity.toLocaleString("en-GB")} ${l.stated_unit === "m2" ? "m²" : (l.stated_unit ?? "")}`
+                      : l.dimensions.length
+                        ? l.dimensions.map((d) => `${d.value} ${d.unit}`).join(" × ")
+                        : null;
+                  return (
+                    <li key={i} className="px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="font-mono text-xs font-medium">{l.rate_code}</span>
+                        <span className="font-medium">{rate?.item ?? ""}</span>
+                        {qty && <span className="text-[13px] text-muted">{qty}</span>}
+                      </div>
+                      <p className="mt-0.5 line-clamp-2 text-[13px] leading-relaxed text-ink-2" title={l.reasoning}>{l.reasoning}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          {!approved && <p className="mt-3 text-xs text-muted">Approve to confirm a “we&apos;ll come and have a look” reply, or price it below after the visit.</p>}
+        </Card>
+      )}
+
+      {quote.outcome === "cannot_quote" && meta.outcome_reason && (
+        <Card title="Couldn't be priced from your list" icon={Ban}>
+          <p className="text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>
+        </Card>
+      )}
+
+      {!visitFirst && linesCard}
+
+      {exclusions.length > 0 && (
+        <Card title="Not included in the price" icon={Ban}>
+          <ul className="divide-y divide-line/70">
+            {exclusions.map((e, i) => {
+              const ex = EXCLUSION[e.reason] ?? { label: e.reason, tone: "neutral" as const };
+              return (
+                <li key={i} className="py-2.5 first:pt-0 last:pb-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{e.request}</span>
+                    <Badge tone={ex.tone}>{ex.label}</Badge>
+                  </div>
+                  <p className="mt-0.5 text-[13px] leading-relaxed text-ink-2">{e.note}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
+
+      {visitFirst && linesCard}
+    </div>
+  );
+
+  const notesPanel = (
+    <div className="space-y-5">
+      {quote.summary && (
+        <Card title="The job" icon={ClipboardList}>
+          <p className="text-sm leading-relaxed text-ink-2">{quote.summary}</p>
+        </Card>
+      )}
+      <div className="grid gap-5 md:grid-cols-2">
+        <ListCard title="Questions for the customer" icon={CircleHelp} items={questions} />
+        <ListCard title="Assumptions made" icon={Info} items={assumptions} />
+      </div>
+      {meta.outcome_reason && !visitFirst && (
+        <Card title="Why the AI drafted it this way" icon={Bot}>
+          <p className="text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>
+        </Card>
+      )}
+      {flags.length > 0 && (
+        <Card title="Review notes" icon={ListChecks} action={<span className="text-xs text-muted">{checked.length} of {flags.length} checked</span>}>
+          <ul className="space-y-2 text-[13px] leading-relaxed text-ink-2">
+            {flags.map((f, i) => (
+              <li key={i} className="flex gap-2">
+                {f.level === "danger" ? (
+                  <ShieldAlert className="mt-0.5 size-4 shrink-0 text-red-600" aria-hidden />
+                ) : f.level === "warning" ? (
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+                ) : (
+                  <Info className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
+                )}
+                <span className={cn(checked.includes(f.message) && "text-muted")}>
+                  {f.message}
+                  {checked.includes(f.message) && <span className="ml-1.5 text-xs text-emerald-700">✓ checked</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+    </div>
+  );
+
+  const tabs = [
+    { key: "quote", label: "Quote", icon: <ListChecks className="size-3.5" aria-hidden />, content: quotePanel },
+    { key: "notes", label: "Notes & questions", icon: <CircleHelp className="size-3.5" aria-hidden />, count: assumptions.length + questions.length, content: notesPanel },
+    {
+      key: "email",
+      label: "Original email",
+      icon: <Mail className="size-3.5" aria-hidden />,
+      content: (
+        <Card title="Original email" icon={Mail} action={<span className="text-xs text-muted">Saved with this quote, exactly as received</span>}>
+          <pre className="-m-5 max-h-[40rem] overflow-auto whitespace-pre-wrap bg-sunken/40 px-5 py-4 font-mono text-xs leading-relaxed text-ink-2">
+            {quote.enquiry_text}
+          </pre>
+        </Card>
+      ),
+    },
+    {
+      key: "history",
+      label: "History",
+      icon: <HistoryIcon className="size-3.5" aria-hidden />,
+      content: (
+        <Card title="History" icon={HistoryIcon}>
+          <Suspense
+            fallback={
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            }
+          >
+            <History entity="quote" entityId={id} path={`/app/quotes/${id}`} />
+          </Suspense>
+        </Card>
+      ),
+    },
+    {
+      key: "preview",
+      label: "Customer preview",
+      icon: <FileText className="size-3.5" aria-hidden />,
+      content: <QuotePreview company={company} quote={quote} customer={customer} lines={lines} exclusions={exclusions} totals={totals} />,
+    },
+  ];
 
   return (
     <div className="animate-rise">
-      <nav className="no-print mb-4 text-[13px] text-muted">
+      <nav className="no-print mb-3 text-[13px] text-muted">
         <Link href="/app/quotes" className="hover:text-ink">Quotes</Link>
         <span className="mx-1.5">/</span>
         <span className="font-mono text-ink-2">{ref}</span>
       </nav>
 
-      {/* Reads like the top of a real quote: who, where, when, how much. */}
-      <header className="no-print card mb-5 flex flex-col gap-5 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[13px] font-semibold tracking-tight">Quote {ref}</span>
-            <OutcomeBadge outcome={quote.outcome} />
-            <StatusBadge status={quote.status} />
-          </div>
-          <h1 className="text-lg font-semibold leading-snug tracking-tight">
-            {customer ? (
-              <Link href={`/app/customers/${customer.id}`} className="hover:underline">
-                {customer.name}
-                {customer.company_name && <span className="font-normal text-ink-2"> · {customer.company_name}</span>}
-              </Link>
-            ) : (
-              <span className="text-ink-2">Customer not matched</span>
-            )}
-          </h1>
-          {customer?.address && <p className="text-[13px] text-muted">{customer.address}</p>}
-          {quote.summary && <p className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-2">{quote.summary}</p>}
-          <p className="mt-2 text-xs text-muted">
-            Drafted {formatDate(quote.created_at, "long")}
-            {drafter?.email && <> by {drafter.email}</>}
-            {quote.model && <> · {quote.model}</>}
-            {quote.approved_at && <> · approved {timeAgo(quote.approved_at)} by {quote.approved_by_email ?? "a team member"}</>}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col gap-3 lg:items-end">
-          {quote.outcome === "quote" && (
-            <div className="lg:text-right">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Total inc VAT</div>
-              <div className="text-2xl font-semibold tracking-tight num">{formatGBP(totals.total)}</div>
-              <div className="text-xs text-muted num">
-                {formatGBP(totals.subtotal)} + VAT {formatGBP(totals.vat)}
-              </div>
-            </div>
+      {/* Just who and where: the numbers and actions live in the sidebar. */}
+      <header className="no-print mb-5">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[13px] font-semibold">{ref}</span>
+          <OutcomeBadge outcome={quote.outcome} />
+          <StatusBadge status={quote.status} />
+          {approved && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted" title="Approved quotes can't be edited">
+              <Lock className="size-3" aria-hidden /> Locked
+            </span>
           )}
-          <ReviewActions
-            quoteId={id}
-            status={quote.status}
-            outcome={quote.outcome}
-            total={totals.total}
-            customerName={customer?.name ?? null}
-            hasDanger={flags.some((f) => f.level === "danger")}
-            canApprove={can("quote.approve")}
-          />
         </div>
+        <h1 className="text-xl font-semibold leading-tight tracking-tight">
+          {customer ? (
+            <>
+              {customer.name}
+              {customer.company_name && <span className="font-normal text-ink-2"> · {customer.company_name}</span>}
+            </>
+          ) : (
+            <span className="text-ink-2">Customer not matched</span>
+          )}
+        </h1>
+        {customer?.address && <p className="mt-0.5 text-[13px] text-muted">{customer.address}</p>}
       </header>
 
-      {!preview && (
-        <>
-          <OutcomeBanner outcome={quote.outcome} status={quote.status} reason={meta.outcome_reason} />
-          <Checks flags={flags} />
-        </>
-      )}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+        {/* Phones: total, actions and checks come before the lines. */}
+        <div className="no-print space-y-5 lg:col-start-2 lg:row-start-1">
+          <section className="card p-4">
+            {quote.outcome === "quote" || lines.length > 0 ? (
+              <>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Total inc VAT</div>
+                <div className="mt-0.5 text-2xl font-semibold tracking-tight num">{formatGBP(totals.total)}</div>
+                <div className="text-xs text-muted num">
+                  {formatGBP(totals.subtotal)} + VAT {formatGBP(totals.vat)}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Reply</div>
+                <div className="mt-0.5 text-base font-semibold">{quote.outcome === "needs_site_visit" ? "We'll visit before pricing" : "Can't be priced"}</div>
+              </>
+            )}
+            {approved && quote.approved_at && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-800">
+                <Lock className="size-3" aria-hidden /> Approved {timeAgo(quote.approved_at)} by {quote.approved_by_email ?? "a team member"}
+              </p>
+            )}
+            <div className="mt-4">
+              <ReviewActions
+                quoteId={id}
+                status={quote.status}
+                outcome={quote.outcome}
+                total={totals.total}
+                customerName={customer?.name ?? null}
+                hasDanger={flags.some((f) => f.level === "danger")}
+                canApprove={can("quote.approve")}
+              />
+            </div>
+          </section>
 
-      <div className="no-print mb-5 flex max-w-full overflow-x-auto">
-        <div className="inline-flex rounded-lg bg-sunken p-1 ring-1 ring-line">
-          {TABS.map(({ key, label, icon: Icon, ...t }) => {
-            const active = key === view;
-            const count = "count" in t ? t.count : 0;
-            return (
-              <Link
-                key={key}
-                href={key === "lines" ? `/app/quotes/${id}` : `/app/quotes/${id}?tab=${key}`}
-                replace
-                scroll={false}
-                className={cn(
-                  "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] transition",
-                  active ? "bg-surface font-medium text-ink shadow-(--shadow-card)" : "text-muted hover:text-ink",
-                )}
-              >
-                <Icon className="size-3.5" aria-hidden /> {label}
-                {count > 0 && <span className="rounded-full bg-line px-1.5 text-[11px] num text-ink-2">{count}</span>}
-              </Link>
-            );
-          })}
+          {!approved && <Checks quoteId={id} flags={flags} initialChecked={checked} />}
         </div>
-      </div>
 
-      {preview ? (
-        <QuotePreview company={company} quote={quote} customer={customer} lines={lines} exclusions={exclusions} totals={totals} />
-      ) : (
-        <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-          <div className="min-w-0 space-y-5">
-            {view === "lines" && (
-              <>
-                {!visitFirst && linesCard}
+        <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
+          <QuoteTabs tabs={tabs} initial={tab === undefined ? "quote" : tab} quoteId={id} />
+        </div>
 
-                {proposed.length > 0 && (
-                  <Card
-                    title="For the site visit (not priced)"
-                    icon={MapPin}
-                    action={editable && aiOnlyVisit ? <PriceProposedButton quoteId={id} /> : <span className="text-xs text-muted">What the AI thinks the job involves</span>}
-                  >
-                    <ul className="divide-y divide-line/70">
-                      {proposed.map((l, i) => {
-                        const rate = rates?.find((r) => r.code === l.rate_code);
-                        const qty =
-                          l.stated_quantity != null
-                            ? `about ${l.stated_quantity.toLocaleString("en-GB")} ${l.stated_unit === "m2" ? "m²" : l.stated_unit ?? ""}`
-                            : l.dimensions.length
-                              ? l.dimensions.map((d) => `${d.value} ${d.unit}`).join(" × ")
-                              : null;
-                        return (
-                          <li key={i} className="py-3 first:pt-0 last:pb-0">
-                            <div className="flex flex-wrap items-center gap-2 text-sm">
-                              <span className="font-mono text-xs font-medium">{l.rate_code}</span>
-                              <span className="font-medium">{rate?.item ?? ""}</span>
-                              {qty && <span className="text-[13px] text-muted">{qty}</span>}
-                            </div>
-                            <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{l.reasoning}</p>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </Card>
-                )}
-
-                {exclusions.length > 0 && (
-                  <Card title="Not included in the price" icon={Ban}>
-                    <ul className="divide-y divide-line/70">
-                      {exclusions.map((e, i) => {
-                        const ex = EXCLUSION[e.reason] ?? { label: e.reason, tone: "neutral" as const };
-                        return (
-                          <li key={i} className="py-3 first:pt-0 last:pb-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium">{e.request}</span>
-                              <Badge tone={ex.tone}>{ex.label}</Badge>
-                            </div>
-                            <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{e.note}</p>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </Card>
-                )}
-                {visitFirst && linesCard}
-              </>
-            )}
-
-            {view === "notes" && (
-              <>
-                <ListCard title="Questions for the customer" icon={CircleHelp} items={quote.questions as string[]} />
-                <ListCard title="Assumptions made" icon={Info} items={quote.assumptions as string[]} />
-                {meta.outcome_reason && (
-                  <Card title="Why the AI drafted it this way" icon={Bot}>
-                    <p className="text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>
-                  </Card>
-                )}
-              </>
-            )}
-
-            {view === "email" && (
-              <Card title="Original email" icon={Mail} action={<span className="text-xs text-muted">Saved with this quote, exactly as received</span>}>
-                <pre className="-m-5 max-h-[40rem] overflow-auto whitespace-pre-wrap bg-sunken/40 px-5 py-4 font-mono text-xs leading-relaxed text-ink-2">
-                  {quote.enquiry_text}
-                </pre>
-              </Card>
-            )}
-
-            {view === "history" && (
-              <Card title="History" icon={HistoryIcon}>
-                <Suspense
-                  fallback={
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-4 w-2/3" />
-                    </div>
-                  }
-                >
-                  <History entity="quote" entityId={id} path={`/app/quotes/${id}?tab=history`} />
-                </Suspense>
-              </Card>
-            )}
-          </div>
-
-          <aside className="space-y-5">
-            <Card title="Customer" icon={UserRound}>
-              {customer ? (
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <Link href={`/app/customers/${customer.id}`} className="font-medium hover:underline">{customer.name}</Link>
-                    {customer.company_name && <div className="text-ink-2">{customer.company_name}</div>}
-                    {customer.address && <div className="text-[13px] text-muted">{customer.address}</div>}
+        <aside className="no-print space-y-5 lg:col-start-2">
+          <Card title="Customer" icon={UserRound}>
+            {customer ? (
+              <div className="space-y-3 text-sm">
+                <div>
+                  <Link href={`/app/customers/${customer.id}`} className="font-medium hover:underline">{customer.name}</Link>
+                  {customer.company_name && <div className="text-ink-2">{customer.company_name}</div>}
+                  {customer.address && <div className="text-[13px] text-muted">{customer.address}</div>}
+                </div>
+                {customer.notes && (
+                  <div className="rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px] text-brand-ink">
+                    <span className="font-medium">History:</span> {customer.notes}
                   </div>
-                  {customer.notes && (
-                    <div className="rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px] text-brand-ink">
-                      <span className="font-medium">History:</span> {customer.notes}
-                    </div>
-                  )}
-                  {(customer.payment_terms || customer.invoice_email) && (
-                    <dl className="space-y-1 text-[13px]">
-                      {customer.payment_terms && (
-                        <div className="flex justify-between gap-3">
-                          <dt className="text-muted">Payment terms</dt>
-                          <dd className="font-medium">{customer.payment_terms}</dd>
-                        </div>
-                      )}
-                      {customer.invoice_email && (
-                        <div className="flex justify-between gap-3">
-                          <dt className="text-muted">Invoices to</dt>
-                          <dd className="truncate font-medium">{customer.invoice_email}</dd>
-                        </div>
-                      )}
-                    </dl>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-muted">Not matched to anyone in your customer list.</p>
-                  {editable && (
-                    <LinkButton href={`/app/customers/new?from_quote=${id}`} variant="secondary" size="sm">
-                      <UserPlus className="size-3.5" /> Save as new customer
-                    </LinkButton>
-                  )}
-                </div>
-              )}
-              {matches.length > 0 && (
-                <ul className="mt-3 space-y-1.5 border-t border-line/70 pt-3">
+                )}
+                {(customer.payment_terms || customer.invoice_email) && (
+                  <dl className="space-y-1 text-[13px]">
+                    {customer.payment_terms && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted">Payment terms</dt>
+                        <dd className="font-medium">{customer.payment_terms}</dd>
+                      </div>
+                    )}
+                    {customer.invoice_email && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted">Invoices to</dt>
+                        <dd className="truncate font-medium">{customer.invoice_email}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted">Not matched to anyone in your customer list.</p>
+                {editable && (
+                  <LinkButton href={`/app/customers/new?from_quote=${id}`} variant="secondary" size="sm">
+                    <UserPlus className="size-3.5" /> Save as new customer
+                  </LinkButton>
+                )}
+              </div>
+            )}
+            {matches.length > 0 && (
+              <details className="mt-3 border-t border-line/70 pt-3 text-xs text-muted">
+                <summary className="cursor-pointer select-none hover:text-ink">How they were matched</summary>
+                <ul className="mt-1.5 space-y-1.5">
                   {matches.slice(0, 3).map((m) => (
-                    <li key={m.customer_id} className="text-xs text-muted">
+                    <li key={m.customer_id}>
                       <Badge tone={m.confidence === "high" ? "success" : "warning"} className="mr-1.5">
                         {m.confidence === "high" ? "Match" : "Possible"}
                       </Badge>
@@ -389,50 +430,50 @@ export default async function QuotePage({
                     </li>
                   ))}
                 </ul>
-              )}
-              {editable && (
-                <div className="mt-4">
-                  <label className="label" htmlFor="customer">Change customer</label>
-                  <CustomerPicker
-                    quoteId={id}
-                    current={quote.customer_id}
-                    customers={(customers ?? []).map((c) => ({ id: c.id, name: c.company_name ? `${c.name} (${c.company_name})` : c.name }))}
-                  />
-                </div>
-              )}
-            </Card>
+              </details>
+            )}
+            {editable && (
+              <div className="mt-4">
+                <label className="label" htmlFor="customer">Change customer</label>
+                <CustomerPicker
+                  quoteId={id}
+                  current={quote.customer_id}
+                  customers={(customers ?? []).map((c) => ({ id: c.id, name: c.company_name ? `${c.name} (${c.company_name})` : c.name }))}
+                />
+              </div>
+            )}
+          </Card>
 
-            <Card title="AI draft" icon={Bot}>
-              <dl className="space-y-1.5 text-[13px]">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-muted">Provider</dt>
-                  <dd className="font-medium">{quote.provider === "openai" ? "OpenAI" : quote.provider === "anthropic" ? "Anthropic" : quote.provider}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-muted">Model</dt>
-                  <dd className="truncate font-mono text-xs">{quote.model}</dd>
-                </div>
-              </dl>
+          <Card title="Details" icon={Bot}>
+            <dl className="space-y-1.5 text-[13px]">
+              <Row label="Drafted">{formatDate(quote.created_at, "medium")}</Row>
+              {drafter?.email && <Row label="By"><span className="truncate">{drafter.email}</span></Row>}
+              <Row label="AI">
+                {quote.provider === "openai" ? "OpenAI" : quote.provider === "anthropic" ? "Anthropic" : quote.provider} ·{" "}
+                <span className="font-mono text-xs">{quote.model}</span>
+              </Row>
               {usage && (
-                <dl className="mt-3 space-y-1.5 border-t border-line/70 pt-3 text-[13px]">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted">Price list sent</dt>
-                    <dd className="num">{usage.items_offered} of {usage.items_total} items</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted">Tokens in / out</dt>
-                    <dd className="num">{usage.usage.input.toLocaleString("en-GB")} / {usage.usage.output.toLocaleString("en-GB")}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted">Read from cache</dt>
-                    <dd className="num">{usage.usage.input ? Math.round((usage.usage.cached / usage.usage.input) * 100) : 0}%</dd>
-                  </div>
-                </dl>
+                <>
+                  <Row label="Price list sent">{usage.items_offered} of {usage.items_total} items</Row>
+                  <Row label="Tokens in / out">
+                    {usage.usage.input.toLocaleString("en-GB")} / {usage.usage.output.toLocaleString("en-GB")}
+                  </Row>
+                  <Row label="Read from cache">{usage.usage.input ? Math.round((usage.usage.cached / usage.usage.input) * 100) : 0}%</Row>
+                </>
               )}
-            </Card>
-          </aside>
-        </div>
-      )}
+            </dl>
+          </Card>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="shrink-0 text-muted">{label}</dt>
+      <dd className="min-w-0 text-right num">{children}</dd>
     </div>
   );
 }
@@ -450,94 +491,6 @@ function dedupeFlags(flags: Flag[]): Flag[] {
     if (!seen || rank[f.level] < rank[seen.level]) byKey.set(key, f);
   }
   return [...byKey.values()];
-}
-
-function OutcomeBanner({ outcome, status, reason }: { outcome: string; status: string; reason?: string }) {
-  if (status === "approved") {
-    return (
-      <div className="mb-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-        <Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <div>
-          <strong className="font-semibold">Approved and locked.</strong> This version can be sent to the customer. It can no longer be edited.
-        </div>
-      </div>
-    );
-  }
-  if (outcome === "needs_site_visit") {
-    return (
-      <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        <MapPin className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden />
-        <div>
-          <strong className="font-semibold">Not priced: this job needs a site visit.</strong>
-          {reason && <span className="text-amber-900"> {reason}</span>}
-          <div className="mt-1 text-[13px] text-amber-800">Approve to confirm a “we&apos;ll come and have a look” reply. To price it after the visit, add lines below.</div>
-        </div>
-      </div>
-    );
-  }
-  if (outcome === "cannot_quote") {
-    return (
-      <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-        <Ban className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <div>
-          <strong className="font-semibold">Nothing here could be priced from your list.</strong>
-          {reason && <span> {reason}</span>}
-        </div>
-      </div>
-    );
-  }
-  return null;
-}
-
-/**
- * Security warnings always show in full. Everything else is one collapsible
- * "Check before approving" list, so the quote itself stays the focus.
- */
-function Checks({ flags }: { flags: Flag[] }) {
-  if (!flags.length) return null;
-  const danger = flags.filter((f) => f.level === "danger");
-  const rest = flags.filter((f) => f.level !== "danger").sort((a, b) => (a.level === b.level ? 0 : a.level === "warning" ? -1 : 1));
-  return (
-    <div className="no-print mb-5 space-y-2">
-      {danger.map((f, i) => (
-        <div key={i} className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-relaxed text-red-900">
-          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-red-600" aria-hidden />
-          <span>
-            <strong className="font-semibold">Security check: </strong>
-            {f.message}
-          </span>
-        </div>
-      ))}
-      {rest.length > 0 && (
-        <details open className="card group">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-sm font-semibold">
-            <TriangleAlert className="size-4 text-amber-600" aria-hidden /> Check before approving
-            <span className="rounded-full bg-amber-100 px-2 text-xs font-medium text-amber-900 num">{rest.length}</span>
-            <span className="ml-auto text-xs font-normal text-muted group-open:hidden">Show</span>
-            <span className="ml-auto hidden text-xs font-normal text-muted group-open:inline">Hide</span>
-          </summary>
-          <ul className="divide-y divide-line/70 border-t border-line/70">
-            {rest.map((f, i) => {
-              const code = f.message.match(/^([A-Z][A-Z0-9_-]{1,19}):\s*/);
-              return (
-                <li key={i} className="flex items-start gap-3 px-5 py-2.5 text-[13px] leading-relaxed text-ink-2">
-                  {f.level === "warning" ? (
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-                  ) : (
-                    <Info className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
-                  )}
-                  <span>
-                    {code && <span className="mr-1.5 font-mono text-xs font-medium text-ink">{code[1]}</span>}
-                    {code ? f.message.slice(code[0].length) : f.message}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      )}
-    </div>
-  );
 }
 
 function ListCard({ title, icon, items }: { title: string; icon: typeof Info; items: string[] }) {

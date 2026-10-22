@@ -141,6 +141,24 @@ export async function priceProposedLines(quoteId: string): Promise<{ error?: str
   return {};
 }
 
+/** Ticks a "check before approving" note as done (or un-ticks it). */
+export async function setCheckDone(quoteId: string, message: string, done: boolean): Promise<{ error?: string; checked?: string[] }> {
+  if (!z.uuid().safeParse(quoteId).success || typeof message !== "string" || message.length > 2000) return { error: "Quote not found." };
+  const { supabase } = await getTenant();
+  const { data: quote } = await supabase.from("quotes").select("status, flags, checked_flags").eq("id", quoteId).maybeSingle();
+  if (!quote) return { error: "Quote not found." };
+  if (quote.status === "approved") return { error: "Approved quotes can't be changed." };
+  // Only notes that are actually on this quote can be ticked.
+  if (!(quote.flags as Flag[]).some((f) => f.message === message)) return { error: "That note isn't on this quote any more. Reload the page." };
+  const current = new Set((quote.checked_flags as string[]) ?? []);
+  if (done) current.add(message);
+  else current.delete(message);
+  const checked = [...current];
+  const { error } = await supabase.from("quotes").update({ checked_flags: checked }).eq("id", quoteId);
+  if (error) return { error: "Couldn't save that." };
+  return { checked };
+}
+
 const statusChange = z.enum(["approved", "rejected", "draft"]);
 
 export async function setStatus(quoteId: string, next: string): Promise<{ error?: string }> {

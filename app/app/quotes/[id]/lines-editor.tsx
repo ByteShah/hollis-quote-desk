@@ -130,7 +130,7 @@ export function LinesEditor({
                           <TriangleAlert className="size-3" aria-hidden /> Check
                         </span>
                       )}
-                      {l.note && <span className="line-clamp-2 max-w-md" title={l.note}>{l.note}</span>}
+                      {l.note && <span className="line-clamp-1 min-w-0 max-w-md flex-1" title={l.note}>{l.note}</span>}
                     </div>
                   </td>
                   <td className="td text-right">
