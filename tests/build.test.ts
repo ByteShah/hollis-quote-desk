@@ -231,3 +231,15 @@ describe("price list narrowing", () => {
     expect(narrowRates(many, [])).toHaveLength(200);
   });
 });
+
+describe("Claude schema", () => {
+  it("rewrites nullable type arrays as anyOf, keeping enums on the right branch", async () => {
+    const { draftJsonSchema, nullableAsAnyOf } = await import("@/lib/ai/schema");
+    const out = JSON.stringify(nullableAsAnyOf(draftJsonSchema));
+    expect(out).not.toMatch(/"type":\[/);
+    expect(nullableAsAnyOf({ type: ["string", "null"], enum: ["a", null], description: "d" })).toEqual({
+      description: "d",
+      anyOf: [{ type: "string", enum: ["a", null] }, { type: "null" }],
+    });
+  });
+});

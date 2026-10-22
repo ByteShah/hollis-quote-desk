@@ -1,7 +1,7 @@
 import "server-only";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
-import { draftJsonSchema, draftSchema, type AiDraft } from "./schema";
+import { draftJsonSchema, draftSchema, nullableAsAnyOf, type AiDraft } from "./schema";
 
 export type Provider = "openai" | "anthropic";
 
@@ -10,8 +10,10 @@ export const DEFAULT_MODELS: Record<Provider, string> = {
   anthropic: "claude-sonnet-5-5",
 };
 
-const TIMEOUT_MS = 60_000;
-const MAX_TOKENS = 4000;
+const TIMEOUT_MS = 90_000;
+// Reasoning/thinking tokens count against this limit on current models, so it
+// is a ceiling, not a target: a typical draft uses well under 2,000.
+const MAX_TOKENS = 16_000;
 
 export class AiError extends Error {}
 
@@ -27,13 +29,19 @@ type Call = {
 
 export type Usage = { input: number; cached: number; output: number };
 
-type Structured = { name: string; description: string; schema: Record<string, unknown>; maxTokens: number };
+/** How hard the model thinks (Anthropic `effort`; ignored for OpenAI). */
+type Effort = "low" | "medium";
+
+type Structured = { name: string; description: string; schema: Record<string, unknown>; maxTokens: number; effort: Effort };
 
 const DRAFT: Structured = {
   name: "submit_quote_draft",
   description: "Submit the structured quote proposal.",
   schema: draftJsonSchema as unknown as Record<string, unknown>,
   maxTokens: MAX_TOKENS,
+  // Reading an email and choosing codes needs some judgement (site visit or
+  // not, what to estimate), but not deep reasoning.
+  effort: "medium",
 };
 
 /** One structured call, validated against the schema; retried once on a bad shape. */
@@ -59,7 +67,8 @@ const CATEGORY_PICK = (categories: string[]): Structured => ({
     required: ["categories"],
     properties: { categories: { type: "array", items: { type: "string", enum: categories } } },
   },
-  maxTokens: 300,
+  maxTokens: 4000,
+  effort: "low",
 });
 
 /**
@@ -117,19 +126,28 @@ async function callOpenAI({ apiKey, model, system, user, cacheKey }: Call, spec:
 async function callAnthropic({ apiKey, model, system, user }: Call, spec: Structured) {
   const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS, maxRetries: 1 });
   try {
+    // Structured output rather than a forced tool call: current Claude models
+    // (Sonnet 5.5, Opus 5.5) reject forced tool_choice with a 400.
     const res = await client.messages.create({
       model,
       max_tokens: spec.maxTokens,
       // Cache the rules + price list: repeat enquiries read it at a fraction of the price.
       system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: user }],
-      tools: [{ name: spec.name, description: spec.description, input_schema: spec.schema as Anthropic.Tool.InputSchema }],
-      tool_choice: { type: "tool", name: spec.name },
+      output_config: { effort: spec.effort, format: { type: "json_schema", schema: nullableAsAnyOf(spec.schema) as Record<string, unknown> } },
     });
-    const block = res.content.find((b) => b.type === "tool_use");
-    if (!block || block.type !== "tool_use") throw new AiError("The AI returned no structured draft.");
+    if (res.stop_reason === "refusal") throw new AiError("The AI declined to draft this enquiry. Draft it by hand.");
+    if (res.stop_reason === "max_tokens") throw new AiError("The AI's answer was cut off. Try again.");
+    const text = res.content.find((b) => b.type === "text");
+    if (!text || text.type !== "text") throw new AiError("The AI returned no structured draft.");
+    let output: unknown;
+    try {
+      output = JSON.parse(text.text);
+    } catch {
+      throw new AiError("The AI returned an unexpected format.");
+    }
     return {
-      output: block.input,
+      output,
       usage: {
         input: (res.usage.input_tokens ?? 0) + (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
         cached: res.usage.cache_read_input_tokens ?? 0,
@@ -141,25 +159,21 @@ async function callAnthropic({ apiKey, model, system, user }: Call, spec: Struct
   }
 }
 
-/** Cheap call used by the settings page to check a key works. */
+const KEY_CHECK: Structured = {
+  name: "key_check",
+  description: "Confirm the connection works.",
+  schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } },
+  maxTokens: 2000,
+  effort: "low",
+};
+
+/**
+ * Cheap call used by the settings page to check a key works. It goes through
+ * the same structured-output path as real drafts, so a model that can't do
+ * that is caught here rather than on the first enquiry.
+ */
 export async function testKey(provider: Provider, apiKey: string, model: string): Promise<void> {
-  try {
-    if (provider === "openai") {
-      await new OpenAI({ apiKey, timeout: 20_000, maxRetries: 0 }).chat.completions.create({
-        model,
-        max_completion_tokens: 16,
-        messages: [{ role: "user", content: "Reply with OK." }],
-      });
-    } else {
-      await new Anthropic({ apiKey, timeout: 20_000, maxRetries: 0 }).messages.create({
-        model,
-        max_tokens: 8,
-        messages: [{ role: "user", content: "Reply with OK." }],
-      });
-    }
-  } catch (e) {
-    throw toAiError(e);
-  }
+  await structured({ provider, apiKey, model, system: "Answer with ok: true.", user: "Check the connection." }, KEY_CHECK);
 }
 
 // Never echo provider error bodies verbatim: some include request details.
@@ -168,6 +182,7 @@ function toAiError(e: unknown): AiError {
   const status = (e as { status?: number })?.status;
   if (status === 401 || status === 403) return new AiError("The AI provider rejected this API key.");
   if (status === 404) return new AiError("The AI provider doesn't recognise that model name.");
+  if (status === 400) return new AiError("The AI provider rejected the request. Check the model name is a current model that supports structured output.");
   if (status === 429) return new AiError("The AI provider is rate-limiting this key (or it has no credit). Try again shortly.");
   if (status && status >= 500) return new AiError("The AI provider had an error. Try again shortly.");
   if ((e as Error)?.name?.includes("Timeout")) return new AiError("The AI took too long to respond. Try again.");

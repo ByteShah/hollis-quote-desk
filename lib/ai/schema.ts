@@ -151,3 +151,20 @@ export const draftJsonSchema = {
     },
   },
 } as const;
+
+/**
+ * `{type: ["number", "null"]}` → `{anyOf: [{type: "number"}, {type: "null"}]}`.
+ * The two mean the same; anyOf is the form Claude's structured outputs
+ * document, and the OpenAI schema stays as it is.
+ */
+export function nullableAsAnyOf(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(nullableAsAnyOf);
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node)) out[k] = nullableAsAnyOf(v);
+  if (Array.isArray(out.type)) {
+    const { type, description, ...rest } = out as { type: string[]; description?: unknown };
+    return { ...(description ? { description } : {}), anyOf: type.map((t) => (t === "null" ? { type: "null" } : { ...rest, type: t })) };
+  }
+  return out;
+}
