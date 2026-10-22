@@ -181,7 +181,7 @@ Then sign in as an owner, open **Settings → AI provider**, and paste an OpenAI
 - **Email invitations** through a proper email provider. **Multi-company users** (an accountant in two firms): the schema allows it; the company switcher is still to build.
 - **Key encryption** in a KMS or Supabase Vault, with rotation.
 - **UK GDPR tools:** export a person's data, or erase it while keeping quote figures.
-- **Hosting:** move the database to a London region; it's in Singapore today. Add backups and monitoring.
+- **Hosting:** the database and the server code both run in Singapore (`vercel.json` pins functions to `sin1` next to the database; that took pages from 2–3 s to about 0.4 s). For Hollis's real use, move both to London. Add backups and monitoring.
 - **Faster lists:** keyset pagination and full-text search once a company has tens of thousands of records.
 
 ## How I used AI tools
