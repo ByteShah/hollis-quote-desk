@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { quoteRef } from "@/lib/quote/number";
 import type { Metadata } from "next";
 import { ChevronRight, Inbox, Plus } from "lucide-react";
 import { getTenant } from "@/lib/tenant";
@@ -20,6 +21,7 @@ type View = keyof typeof VIEWS;
 
 type Row = {
   id: string;
+  number: number;
   summary: string | null;
   outcome: string;
   status: string;
@@ -50,7 +52,7 @@ export default async function QuotesPage({
 
   let query = supabase
     .from("quotes")
-    .select("id, summary, outcome, status, total, created_at, flags, customers(name, company_name)")
+    .select("id, number, summary, outcome, status, total, created_at, flags, customers(name, company_name)")
     .eq("company_id", company.id);
   if (scope?.ids) query = query.in("id", scope.ids.length ? scope.ids : ["00000000-0000-0000-0000-000000000000"]);
   if (scope?.customerId) query = query.eq("customer_id", scope.customerId);
@@ -164,7 +166,10 @@ export default async function QuotesPage({
                           {q.customers?.name ?? <span className="text-muted">Unknown customer</span>}
                           {q.customers?.company_name && <span className="font-normal text-muted"> · {q.customers.company_name}</span>}
                         </Link>
-                        <div className="mt-0.5 line-clamp-1 text-[13px] text-muted">{q.summary ?? "Untitled"}</div>
+                        <div className="mt-0.5 line-clamp-1 text-[13px] text-muted">
+                          <span className="mr-1.5 font-mono text-xs text-ink-2">{quoteRef(q.number)}</span>
+                          {q.summary ?? "Untitled"}
+                        </div>
                       </td>
                       <td className="td">
                         <div className="flex flex-wrap items-center gap-1.5">

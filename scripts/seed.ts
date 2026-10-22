@@ -36,7 +36,7 @@ const HOLLIS_RULES = `- Prices are always ex VAT; the system adds VAT at 20% and
 - We don't do dropped kerbs / vehicle crossovers. Tell the customer to go to the council.
 - Resin bound surfacing always goes to Dave (supplier price changes). Soakaways depend on a perc test and tarmac overlays need a sound base: these need a site visit.
 - Plumbing, electrics, fencing and building work are outside our trade.
-- Excavated material has to go somewhere: include muck away (EX05, per 8-wheeler load of about 10 m3 loose) or a skip (PL01) for jobs that dig out.
+- Disposal: EX01 (excavate & cart away) and EX03 (break out & remove) already include taking the material away, so don't add muck away or a skip for that material; say "disposal included in EX01/EX03" in assumptions. For work that doesn't include removal (EX02 reduce levels, EX04 break out concrete), add muck away (EX05, per 8-wheeler load of about 10 m3 loose) for bigger volumes or a skip (PL01, 8 yard, about 6 m3) for small ones.
 - Skip permit (road_permit on PL01) only when the skip goes on the road. If it fits on the drive there's no permit. If the enquiry doesn't say, leave it off and ask.
 - Herringbone is optional: only add it when the customer asks for herringbone. If they want to match an existing drive and don't say the pattern, ask.
 - Kiln-dried sand is included in block paving (BP01). BP04 is only for re-sanding jobs with no new blocks.

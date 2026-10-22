@@ -254,4 +254,19 @@ describe.skipIf(!enabled)("row level security", () => {
     const rename = await gaz.from("companies").update({ name: "Chase Landscapes" }).eq("id", chaseId).select("name");
     expect(rename.error).toBeNull();
   });
+
+  it("quote numbers are assigned by the database, per company, and can't be changed", async () => {
+    const [daveId, gazId] = await Promise.all([dave, gaz].map(async (c) => (await c.auth.getUser()).data.user!.id));
+    const [{ data: d }, { data: g }] = await Promise.all([
+      dave.from("quotes").insert({ company_id: hollisId, enquiry_text: "x", outcome: "quote", number: 9999, created_by: daveId }).select("id, number").single(),
+      gaz.from("quotes").insert({ company_id: chaseId, enquiry_text: "x", outcome: "quote", created_by: gazId }).select("id, number").single(),
+    ]);
+    created.push(d!.id, g!.id);
+    const max = async (cid: string, id: string) =>
+      (await admin.from("quotes").select("number").eq("company_id", cid).neq("id", id).order("number", { ascending: false }).limit(1)).data?.[0]?.number ?? 0;
+    expect(d!.number).toBe((await max(hollisId, d!.id)) + 1); // the client's 9999 was ignored
+    expect(g!.number).toBe((await max(chaseId, g!.id)) + 1);
+    const { data: renumbered } = await dave.from("quotes").update({ number: 1 }).eq("id", d!.id).select("number").single();
+    expect(renumbered!.number).toBe(d!.number);
+  });
 });

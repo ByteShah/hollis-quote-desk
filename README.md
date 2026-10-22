@@ -97,7 +97,7 @@ Every rule is enforced **in the database** (RLS policies, `has_role()` checks in
   - Security headers (CSP, frame-ancestors none, HSTS, nosniff).
   - No enquiry text or keys in logs.
   - Per-company rate limits on AI calls, imports and invitations.
-- **Tested against the real database** (`tests/rls.test.ts`, 22 tests). Each one signs in as different companies and roles and tries to cross the line: reading, writing, approving, importing, undoing another company's import, reading invitation tokens, changing protected columns, and the platform admin reading tenant data.
+- **Tested against the real database** (`tests/rls.test.ts`, 23 tests). Each one signs in as different companies and roles and tries to cross the line: reading, writing, approving, importing, undoing another company's import, reading invitation tokens, changing protected columns, setting or changing quote numbers, and the platform admin reading tenant data.
 
 ## The messy data
 
@@ -152,7 +152,7 @@ Confirmed by Dave and Shaz:
 - Herringbone only when the customer asks for it. The skip permit only when the skip goes on the road. If the enquiry doesn't say, it's flagged.
 
 My own assumptions:
-- Dug-out material needs disposal (muck away or skip). The AI includes it with its reasoning, and the reviewer can remove it.
+- EX01 "excavate & **cart away**" and EX03 "break out & **remove**" already include taking the material away, so no muck away or skip is added for them. Disposal is only added for work that doesn't include it, such as EX04 "break out concrete". The AI states the assumption on the draft. (To confirm with Dave.)
 - "Approve" means "OK to send". The app doesn't send emails.
 - A price counts as stale after 6 months (a company setting).
 - "Today" for a price means today in the UK, so a price "from 1 March" starts at UK midnight.
@@ -162,7 +162,7 @@ My own assumptions:
 
 ```bash
 cp .env.example .env.local      # Supabase URL/keys, KEY_ENCRYPTION_SECRET (openssl rand -base64 32), SEED_PASSWORD
-supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0023)
+supabase link --project-ref <ref> && supabase db push   # applies supabase/migrations in order (0001…0024)
 npm install
 npm run seed                    # companies, logins, platform admin, Hollis price list and customers
 npm run dev
@@ -171,7 +171,7 @@ npm run dev
 Then sign in as an owner, open **Settings → AI provider**, and paste an OpenAI or Anthropic key.
 
 **Tests**
-- `npm test`: 69 tests. 47 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that, with Dave's answers, it reaches exactly the confirmed setup), price-list narrowing, UK dates and CSV safety. The other 22 test RLS against the live database and run when `.env.local` is present.
+- `npm test`: 71 tests. 48 are unit tests: pricing, units, loads, "included in" and site-visit items, customer matching, the importer run on Shaz's real files (including proof that, with Dave's answers, it reaches exactly the confirmed setup), price-list narrowing, UK dates and CSV safety. The other 23 test RLS against the live database and run when `.env.local` is present.
 - `npm run e2e` (with `npm run dev` running): 31 browser steps covering the price list, customers, CSV import and undo, importing Shaz's raw file with the importer's questions, onboarding, roles and lockout. It uses your installed Chrome and cleans up after itself.
 
 ## What I'd do next

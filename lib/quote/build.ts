@@ -171,11 +171,13 @@ export function buildQuote(
       });
     }
 
-    if (l.quantity_source === "estimate") {
-      flags.push({ level: "info", message: `${rate.code}: quantity is an AI estimate; check it. ${l.reasoning}` });
-    }
-    if (l.confidence === "low") {
-      flags.push({ level: "warning", message: `${rate.code}: low confidence. ${l.reasoning}` });
+    // One note per line: an estimate and low confidence usually share the same reasoning.
+    if (l.quantity_source === "estimate" || l.confidence === "low") {
+      const what = l.quantity_source === "estimate" ? "quantity is an AI estimate" : "AI is unsure about this line";
+      flags.push({
+        level: l.confidence === "low" ? "warning" : "info",
+        message: `${rate.code}: ${what}${l.quantity_source === "estimate" && l.confidence === "low" ? " (low confidence)" : ""}; check it. ${l.reasoning}`,
+      });
     }
     if (rate.unit === "m2" && qty > company.auto_quote_max_m2) {
       outcome = "needs_site_visit";

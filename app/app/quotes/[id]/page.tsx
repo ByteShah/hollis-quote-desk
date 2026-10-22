@@ -13,6 +13,7 @@ import {
   Info,
   ListChecks,
   Lock,
+  Mail,
   MapPin,
   ShieldAlert,
   TriangleAlert,
@@ -27,6 +28,9 @@ import { OutcomeBadge, StatusBadge, timeAgo } from "@/components/status";
 import { ReviewActions, CustomerPicker } from "./review-actions";
 import { QuotePreview } from "./preview";
 import { History } from "@/components/history";
+import { formatDate } from "@/lib/dates";
+import { formatGBP } from "@/lib/quote/money";
+import { quoteRef } from "@/lib/quote/number";
 
 // The editor is the heaviest client bundle on the page: split it out so the
 // read-only parts render first.
@@ -65,7 +69,7 @@ export default async function QuotePage({
   const { data: quote } = await supabase.from("quotes").select("*").eq("id", id).maybeSingle();
   if (!quote) notFound();
 
-  const [{ data: lineRows }, { data: rates }, { data: customers }] = await Promise.all([
+  const [{ data: lineRows }, { data: rates }, { data: customers }, { data: drafter }] = await Promise.all([
     supabase.from("quote_lines").select("*").eq("quote_id", id).order("position"),
     supabase.from("rates_current").select("code, item, unit, rate_ex_vat").eq("company_id", company.id).eq("status", "active").order("code"),
     supabase
@@ -74,6 +78,9 @@ export default async function QuotePage({
       .eq("company_id", company.id)
       .is("archived_at", null)
       .order("name"),
+    quote.created_by
+      ? supabase.from("memberships").select("email").eq("company_id", company.id).eq("user_id", quote.created_by).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   const lines = (lineRows ?? []).map((l) => ({
@@ -89,220 +96,180 @@ export default async function QuotePage({
   const customer = customers?.find((c) => c.id === quote.customer_id) ?? null;
   const meta = quote.customer_match as { matches?: CustomerMatch[]; outcome_reason?: string };
   const matches = meta.matches ?? [];
-  const flags = quote.flags as Flag[];
+  const flags = dedupeFlags(quote.flags as Flag[]);
+  // "KB01: …" notes also show as a Check marker on that line.
+  const checks: Record<string, string[]> = {};
+  for (const f of flags) {
+    const code = f.level !== "danger" ? f.message.match(/^([A-Z][A-Z0-9_-]{1,19}):/)?.[1] : undefined;
+    if (code) (checks[code] ??= []).push(f.message.slice(code.length + 1).trim());
+  }
   const usage = (quote.ai_raw as { usage?: { input: number; cached: number; output: number }; items_offered?: number; items_total?: number } | null)?.usage
     ? (quote.ai_raw as { usage: { input: number; cached: number; output: number }; items_offered: number; items_total: number })
     : null;
   const exclusions = quote.exclusions as Exclusion[];
   const editable = quote.status !== "approved";
-  const preview = tab === "preview";
+  const view = (["preview", "notes", "email", "history"] as const).find((t) => t === tab) ?? "lines";
+  const preview = view === "preview";
+  const ref = quoteRef(quote.number);
   const totals = { subtotal: Number(quote.subtotal), vat: Number(quote.vat), total: Number(quote.total) };
+
+  const TABS = [
+    { key: "lines", label: "Quote", icon: ListChecks },
+    { key: "notes", label: "Notes & questions", icon: CircleHelp, count: (quote.assumptions as string[]).length + (quote.questions as string[]).length },
+    { key: "email", label: "Original email", icon: Mail },
+    { key: "history", label: "History", icon: HistoryIcon },
+    { key: "preview", label: "Customer preview", icon: FileText },
+  ] as const;
 
   return (
     <div className="animate-rise">
       <nav className="no-print mb-4 text-[13px] text-muted">
         <Link href="/app/quotes" className="hover:text-ink">Quotes</Link>
         <span className="mx-1.5">/</span>
-        <span className="text-ink-2">{customer?.name ?? "Unknown customer"}</span>
+        <span className="font-mono text-ink-2">{ref}</span>
       </nav>
 
-      <div className="no-print mb-5 flex flex-col gap-4 lg:flex-row lg:items-start">
+      {/* Reads like the top of a real quote: who, where, when, how much. */}
+      <header className="no-print card mb-5 flex flex-col gap-5 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
-          <div className="mb-2 flex flex-wrap gap-1.5">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[13px] font-semibold tracking-tight">Quote {ref}</span>
             <OutcomeBadge outcome={quote.outcome} />
             <StatusBadge status={quote.status} />
           </div>
-          <h1 className="text-xl font-semibold leading-snug tracking-tight sm:text-2xl">{quote.summary ?? "Draft quote"}</h1>
-          <p className="mt-1 text-[13px] text-muted">
-            Drafted {timeAgo(quote.created_at)}
+          <h1 className="text-lg font-semibold leading-snug tracking-tight">
+            {customer ? (
+              <Link href={`/app/customers/${customer.id}`} className="hover:underline">
+                {customer.name}
+                {customer.company_name && <span className="font-normal text-ink-2"> · {customer.company_name}</span>}
+              </Link>
+            ) : (
+              <span className="text-ink-2">Customer not matched</span>
+            )}
+          </h1>
+          {customer?.address && <p className="text-[13px] text-muted">{customer.address}</p>}
+          {quote.summary && <p className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-2">{quote.summary}</p>}
+          <p className="mt-2 text-xs text-muted">
+            Drafted {formatDate(quote.created_at, "long")}
+            {drafter?.email && <> by {drafter.email}</>}
+            {quote.model && <> · {quote.model}</>}
             {quote.approved_at && <> · approved {timeAgo(quote.approved_at)} by {quote.approved_by_email ?? "a team member"}</>}
           </p>
         </div>
-        <ReviewActions
-          quoteId={id}
-          status={quote.status}
-          outcome={quote.outcome}
-          total={totals.total}
-          customerName={customer?.name ?? null}
-          hasDanger={flags.some((f) => f.level === "danger")}
-          canApprove={can("quote.approve")}
-        />
-      </div>
+        <div className="flex shrink-0 flex-col gap-3 lg:items-end">
+          {quote.outcome === "quote" && (
+            <div className="lg:text-right">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Total inc VAT</div>
+              <div className="text-2xl font-semibold tracking-tight num">{formatGBP(totals.total)}</div>
+              <div className="text-xs text-muted num">
+                {formatGBP(totals.subtotal)} + VAT {formatGBP(totals.vat)}
+              </div>
+            </div>
+          )}
+          <ReviewActions
+            quoteId={id}
+            status={quote.status}
+            outcome={quote.outcome}
+            total={totals.total}
+            customerName={customer?.name ?? null}
+            hasDanger={flags.some((f) => f.level === "danger")}
+            canApprove={can("quote.approve")}
+          />
+        </div>
+      </header>
 
-      <div className="no-print mb-5 inline-flex rounded-lg bg-sunken p-1 ring-1 ring-line">
-        {[
-          { key: "review", label: "Review", icon: ListChecks, href: `/app/quotes/${id}` },
-          { key: "preview", label: "Customer preview", icon: FileText, href: `/app/quotes/${id}?tab=preview` },
-        ].map(({ key, label, icon: Icon, href }) => {
-          const active = (key === "preview") === preview;
-          return (
-            <Link
-              key={key}
-              href={href}
-              replace
-              scroll={false}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] transition",
-                active ? "bg-surface font-medium text-ink shadow-(--shadow-card)" : "text-muted hover:text-ink",
-              )}
-            >
-              <Icon className="size-3.5" aria-hidden /> {label}
-            </Link>
-          );
-        })}
+      {!preview && (
+        <>
+          <OutcomeBanner outcome={quote.outcome} status={quote.status} reason={meta.outcome_reason} />
+          <Checks flags={flags} />
+        </>
+      )}
+
+      <div className="no-print mb-5 flex max-w-full overflow-x-auto">
+        <div className="inline-flex rounded-lg bg-sunken p-1 ring-1 ring-line">
+          {TABS.map(({ key, label, icon: Icon, ...t }) => {
+            const active = key === view;
+            const count = "count" in t ? t.count : 0;
+            return (
+              <Link
+                key={key}
+                href={key === "lines" ? `/app/quotes/${id}` : `/app/quotes/${id}?tab=${key}`}
+                replace
+                scroll={false}
+                className={cn(
+                  "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] transition",
+                  active ? "bg-surface font-medium text-ink shadow-(--shadow-card)" : "text-muted hover:text-ink",
+                )}
+              >
+                <Icon className="size-3.5" aria-hidden /> {label}
+                {count > 0 && <span className="rounded-full bg-line px-1.5 text-[11px] num text-ink-2">{count}</span>}
+              </Link>
+            );
+          })}
+        </div>
       </div>
 
       {preview ? (
         <QuotePreview company={company} quote={quote} customer={customer} lines={lines} exclusions={exclusions} totals={totals} />
       ) : (
-        <>
-          <OutcomeBanner outcome={quote.outcome} status={quote.status} reason={meta.outcome_reason} />
-          <Flags flags={flags} />
-
-          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-            <div className="min-w-0 space-y-5">
-              <Card title="Line items" icon={ClipboardList} action={<span className="text-xs text-muted">All prices ex VAT</span>}>
-                <LinesEditor
-                  quoteId={id}
-                  editable={editable}
-                  initial={lines}
-                  rates={(rates ?? []).map((r) => ({ ...r, rate_ex_vat: Number(r.rate_ex_vat) }))}
-                  pricing={{ vat_rate: company.vat_rate, min_charge: company.min_charge }}
-                  saved={totals}
-                />
-              </Card>
-
-              {exclusions.length > 0 && (
-                <Card title="Not included in the price" icon={Ban}>
-                  <ul className="divide-y divide-line/70">
-                    {exclusions.map((e, i) => {
-                      const ex = EXCLUSION[e.reason] ?? { label: e.reason, tone: "neutral" as const };
-                      return (
-                        <li key={i} className="py-3 first:pt-0 last:pb-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">{e.request}</span>
-                            <Badge tone={ex.tone}>{ex.label}</Badge>
-                          </div>
-                          <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{e.note}</p>
-                        </li>
-                      );
-                    })}
-                  </ul>
+        <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+          <div className="min-w-0 space-y-5">
+            {view === "lines" && (
+              <>
+                <Card title="Line items" icon={ClipboardList} action={<span className="text-xs text-muted">All prices ex VAT</span>}>
+                  <LinesEditor
+                    quoteId={id}
+                    editable={editable}
+                    initial={lines}
+                    rates={(rates ?? []).map((r) => ({ ...r, rate_ex_vat: Number(r.rate_ex_vat) }))}
+                    pricing={{ vat_rate: company.vat_rate, min_charge: company.min_charge }}
+                    saved={totals}
+                    checks={checks}
+                  />
                 </Card>
-              )}
 
-              <div className="grid gap-5 md:grid-cols-2">
-                <ListCard title="Assumptions made" icon={Info} items={quote.assumptions as string[]} />
+                {exclusions.length > 0 && (
+                  <Card title="Not included in the price" icon={Ban}>
+                    <ul className="divide-y divide-line/70">
+                      {exclusions.map((e, i) => {
+                        const ex = EXCLUSION[e.reason] ?? { label: e.reason, tone: "neutral" as const };
+                        return (
+                          <li key={i} className="py-3 first:pt-0 last:pb-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium">{e.request}</span>
+                              <Badge tone={ex.tone}>{ex.label}</Badge>
+                            </div>
+                            <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{e.note}</p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </Card>
+                )}
+              </>
+            )}
+
+            {view === "notes" && (
+              <>
                 <ListCard title="Questions for the customer" icon={CircleHelp} items={quote.questions as string[]} />
-              </div>
+                <ListCard title="Assumptions made" icon={Info} items={quote.assumptions as string[]} />
+                {meta.outcome_reason && (
+                  <Card title="Why the AI drafted it this way" icon={Bot}>
+                    <p className="text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>
+                  </Card>
+                )}
+              </>
+            )}
 
-              <details className="card group">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3.5 text-sm font-semibold">
-                  <FileText className="size-4 text-muted" aria-hidden /> Original enquiry
-                  <span className="ml-auto text-xs font-normal text-muted group-open:hidden">Show</span>
-                  <span className="ml-auto hidden text-xs font-normal text-muted group-open:inline">Hide</span>
-                </summary>
-                <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap border-t border-line/70 bg-sunken/40 px-5 py-4 font-mono text-xs leading-relaxed text-ink-2">
+            {view === "email" && (
+              <Card title="Original email" icon={Mail} action={<span className="text-xs text-muted">Saved with this quote, exactly as received</span>}>
+                <pre className="-m-5 max-h-[40rem] overflow-auto whitespace-pre-wrap bg-sunken/40 px-5 py-4 font-mono text-xs leading-relaxed text-ink-2">
                   {quote.enquiry_text}
                 </pre>
-              </details>
-            </div>
-
-            <aside className="space-y-5">
-              <Card title="Customer" icon={UserRound}>
-                {customer ? (
-                  <div className="space-y-3 text-sm">
-                    <div>
-                      <Link href={`/app/customers/${customer.id}`} className="font-medium hover:underline">{customer.name}</Link>
-                      {customer.company_name && <div className="text-ink-2">{customer.company_name}</div>}
-                      {customer.address && <div className="text-[13px] text-muted">{customer.address}</div>}
-                    </div>
-                    {customer.notes && (
-                      <div className="rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px] text-brand-ink">
-                        <span className="font-medium">History:</span> {customer.notes}
-                      </div>
-                    )}
-                    {(customer.payment_terms || customer.invoice_email) && (
-                      <dl className="space-y-1 text-[13px]">
-                        {customer.payment_terms && (
-                          <div className="flex justify-between gap-3">
-                            <dt className="text-muted">Payment terms</dt>
-                            <dd className="font-medium">{customer.payment_terms}</dd>
-                          </div>
-                        )}
-                        {customer.invoice_email && (
-                          <div className="flex justify-between gap-3">
-                            <dt className="text-muted">Invoices to</dt>
-                            <dd className="truncate font-medium">{customer.invoice_email}</dd>
-                          </div>
-                        )}
-                      </dl>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-sm text-muted">Not matched to anyone in your customer list.</p>
-                    {editable && (
-                      <LinkButton href={`/app/customers/new?from_quote=${id}`} variant="secondary" size="sm">
-                        <UserPlus className="size-3.5" /> Save as new customer
-                      </LinkButton>
-                    )}
-                  </div>
-                )}
-                {matches.length > 0 && (
-                  <ul className="mt-3 space-y-1.5 border-t border-line/70 pt-3">
-                    {matches.slice(0, 3).map((m) => (
-                      <li key={m.customer_id} className="text-xs text-muted">
-                        <Badge tone={m.confidence === "high" ? "success" : "warning"} className="mr-1.5">
-                          {m.confidence === "high" ? "Match" : "Possible"}
-                        </Badge>
-                        {m.name}: {m.reasons.join(", ")}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {editable && (
-                  <div className="mt-4">
-                    <label className="label" htmlFor="customer">Change customer</label>
-                    <CustomerPicker
-                      quoteId={id}
-                      current={quote.customer_id}
-                      customers={(customers ?? []).map((c) => ({ id: c.id, name: c.company_name ? `${c.name} (${c.company_name})` : c.name }))}
-                    />
-                  </div>
-                )}
               </Card>
+            )}
 
-              <Card title="AI draft" icon={Bot}>
-                <dl className="space-y-1.5 text-[13px]">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted">Provider</dt>
-                    <dd className="font-medium">{quote.provider === "openai" ? "OpenAI" : quote.provider === "anthropic" ? "Anthropic" : quote.provider}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted">Model</dt>
-                    <dd className="truncate font-mono text-xs">{quote.model}</dd>
-                  </div>
-                </dl>
-                {usage && (
-                  <dl className="mt-3 space-y-1.5 border-t border-line/70 pt-3 text-[13px]">
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Price list sent</dt>
-                      <dd className="num">{usage.items_offered} of {usage.items_total} items</dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Tokens in / out</dt>
-                      <dd className="num">{usage.usage.input.toLocaleString("en-GB")} / {usage.usage.output.toLocaleString("en-GB")}</dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Read from cache</dt>
-                      <dd className="num">{usage.usage.input ? Math.round((usage.usage.cached / usage.usage.input) * 100) : 0}%</dd>
-                    </div>
-                  </dl>
-                )}
-                {meta.outcome_reason && <p className="mt-3 border-t border-line/70 pt-3 text-[13px] leading-relaxed text-ink-2">{meta.outcome_reason}</p>}
-              </Card>
-
+            {view === "history" && (
               <Card title="History" icon={HistoryIcon}>
                 <Suspense
                   fallback={
@@ -312,15 +279,125 @@ export default async function QuotePage({
                     </div>
                   }
                 >
-                  <History entity="quote" entityId={id} path={`/app/quotes/${id}`} />
+                  <History entity="quote" entityId={id} path={`/app/quotes/${id}?tab=history`} />
                 </Suspense>
               </Card>
-            </aside>
+            )}
           </div>
-        </>
+
+          <aside className="space-y-5">
+            <Card title="Customer" icon={UserRound}>
+              {customer ? (
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <Link href={`/app/customers/${customer.id}`} className="font-medium hover:underline">{customer.name}</Link>
+                    {customer.company_name && <div className="text-ink-2">{customer.company_name}</div>}
+                    {customer.address && <div className="text-[13px] text-muted">{customer.address}</div>}
+                  </div>
+                  {customer.notes && (
+                    <div className="rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px] text-brand-ink">
+                      <span className="font-medium">History:</span> {customer.notes}
+                    </div>
+                  )}
+                  {(customer.payment_terms || customer.invoice_email) && (
+                    <dl className="space-y-1 text-[13px]">
+                      {customer.payment_terms && (
+                        <div className="flex justify-between gap-3">
+                          <dt className="text-muted">Payment terms</dt>
+                          <dd className="font-medium">{customer.payment_terms}</dd>
+                        </div>
+                      )}
+                      {customer.invoice_email && (
+                        <div className="flex justify-between gap-3">
+                          <dt className="text-muted">Invoices to</dt>
+                          <dd className="truncate font-medium">{customer.invoice_email}</dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted">Not matched to anyone in your customer list.</p>
+                  {editable && (
+                    <LinkButton href={`/app/customers/new?from_quote=${id}`} variant="secondary" size="sm">
+                      <UserPlus className="size-3.5" /> Save as new customer
+                    </LinkButton>
+                  )}
+                </div>
+              )}
+              {matches.length > 0 && (
+                <ul className="mt-3 space-y-1.5 border-t border-line/70 pt-3">
+                  {matches.slice(0, 3).map((m) => (
+                    <li key={m.customer_id} className="text-xs text-muted">
+                      <Badge tone={m.confidence === "high" ? "success" : "warning"} className="mr-1.5">
+                        {m.confidence === "high" ? "Match" : "Possible"}
+                      </Badge>
+                      {m.name}: {m.reasons.join(", ")}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {editable && (
+                <div className="mt-4">
+                  <label className="label" htmlFor="customer">Change customer</label>
+                  <CustomerPicker
+                    quoteId={id}
+                    current={quote.customer_id}
+                    customers={(customers ?? []).map((c) => ({ id: c.id, name: c.company_name ? `${c.name} (${c.company_name})` : c.name }))}
+                  />
+                </div>
+              )}
+            </Card>
+
+            <Card title="AI draft" icon={Bot}>
+              <dl className="space-y-1.5 text-[13px]">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Provider</dt>
+                  <dd className="font-medium">{quote.provider === "openai" ? "OpenAI" : quote.provider === "anthropic" ? "Anthropic" : quote.provider}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Model</dt>
+                  <dd className="truncate font-mono text-xs">{quote.model}</dd>
+                </div>
+              </dl>
+              {usage && (
+                <dl className="mt-3 space-y-1.5 border-t border-line/70 pt-3 text-[13px]">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted">Price list sent</dt>
+                    <dd className="num">{usage.items_offered} of {usage.items_total} items</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted">Tokens in / out</dt>
+                    <dd className="num">{usage.usage.input.toLocaleString("en-GB")} / {usage.usage.output.toLocaleString("en-GB")}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted">Read from cache</dt>
+                    <dd className="num">{usage.usage.input ? Math.round((usage.usage.cached / usage.usage.input) * 100) : 0}%</dd>
+                  </div>
+                </dl>
+              )}
+            </Card>
+          </aside>
+        </div>
       )}
     </div>
   );
+}
+
+/**
+ * Older drafts logged "KB01: quantity is an AI estimate" and "KB01: low
+ * confidence" with the same reasoning; show one, at the higher level.
+ */
+function dedupeFlags(flags: Flag[]): Flag[] {
+  const rank = { danger: 0, warning: 1, info: 2 } as const;
+  const byKey = new Map<string, Flag>();
+  for (const f of flags) {
+    const key = f.message.replace(/^([A-Z][A-Z0-9_-]{1,19}): (quantity is an AI estimate; check it\.|low confidence\.)\s*/, "$1:");
+    const seen = byKey.get(key);
+    if (!seen || rank[f.level] < rank[seen.level]) byKey.set(key, f);
+  }
+  return [...byKey.values()];
 }
 
 function OutcomeBanner({ outcome, status, reason }: { outcome: string; status: string; reason?: string }) {
@@ -360,30 +437,54 @@ function OutcomeBanner({ outcome, status, reason }: { outcome: string; status: s
   return null;
 }
 
-function Flags({ flags }: { flags: Flag[] }) {
+/**
+ * Security warnings always show in full. Everything else is one collapsible
+ * "Check before approving" list, so the quote itself stays the focus.
+ */
+function Checks({ flags }: { flags: Flag[] }) {
   if (!flags.length) return null;
-  const order = { danger: 0, warning: 1, info: 2 } as const;
-  const sorted = [...flags].sort((a, b) => order[a.level] - order[b.level]);
-  const STYLE = {
-    danger: { box: "border-red-200 bg-red-50 text-red-900", icon: ShieldAlert, iconCls: "text-red-600" },
-    warning: { box: "border-amber-200 bg-amber-50/70 text-amber-950", icon: TriangleAlert, iconCls: "text-amber-600" },
-    info: { box: "border-line bg-surface text-ink-2", icon: Info, iconCls: "text-muted" },
-  };
+  const danger = flags.filter((f) => f.level === "danger");
+  const rest = flags.filter((f) => f.level !== "danger").sort((a, b) => (a.level === b.level ? 0 : a.level === "warning" ? -1 : 1));
   return (
-    <ul className="mb-5 space-y-2">
-      {sorted.map((f, i) => {
-        const s = STYLE[f.level];
-        return (
-          <li key={i} className={cn("flex items-start gap-3 rounded-xl border px-4 py-2.5 text-[13px] leading-relaxed", s.box)}>
-            <s.icon className={cn("mt-0.5 size-4 shrink-0", s.iconCls)} aria-hidden />
-            <span>
-              {f.level === "danger" && <strong className="font-semibold">Security check: </strong>}
-              {f.message}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="no-print mb-5 space-y-2">
+      {danger.map((f, i) => (
+        <div key={i} className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-relaxed text-red-900">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-red-600" aria-hidden />
+          <span>
+            <strong className="font-semibold">Security check: </strong>
+            {f.message}
+          </span>
+        </div>
+      ))}
+      {rest.length > 0 && (
+        <details open className="card group">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-sm font-semibold">
+            <TriangleAlert className="size-4 text-amber-600" aria-hidden /> Check before approving
+            <span className="rounded-full bg-amber-100 px-2 text-xs font-medium text-amber-900 num">{rest.length}</span>
+            <span className="ml-auto text-xs font-normal text-muted group-open:hidden">Show</span>
+            <span className="ml-auto hidden text-xs font-normal text-muted group-open:inline">Hide</span>
+          </summary>
+          <ul className="divide-y divide-line/70 border-t border-line/70">
+            {rest.map((f, i) => {
+              const code = f.message.match(/^([A-Z][A-Z0-9_-]{1,19}):\s*/);
+              return (
+                <li key={i} className="flex items-start gap-3 px-5 py-2.5 text-[13px] leading-relaxed text-ink-2">
+                  {f.level === "warning" ? (
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+                  ) : (
+                    <Info className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
+                  )}
+                  <span>
+                    {code && <span className="mr-1.5 font-mono text-xs font-medium text-ink">{code[1]}</span>}
+                    {code ? f.message.slice(code[0].length) : f.message}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
 

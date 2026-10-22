@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus, Trash2, Undo2 } from "lucide-react";
+import { Loader2, Plus, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { MIN_CHARGE_CODE, priceLines, type QuoteLine } from "@/lib/quote/build";
 import { formatGBP } from "@/lib/quote/money";
@@ -25,6 +25,7 @@ export function LinesEditor({
   rates,
   pricing,
   saved,
+  checks = {},
 }: {
   quoteId: string;
   editable: boolean;
@@ -32,6 +33,8 @@ export function LinesEditor({
   rates: RateOption[];
   pricing: { vat_rate: number; min_charge: number };
   saved: { subtotal: number; vat: number; total: number };
+  /** Review notes per rate code, shown as a "Check" marker on the line. */
+  checks?: Record<string, string[]>;
 }) {
   const [lines, setLines] = useState(initial);
   const [dirty, setDirty] = useState(false);
@@ -90,8 +93,8 @@ export function LinesEditor({
           <thead>
             <tr>
               <th className="th">Item</th>
-              <th className="th w-32 text-right">Qty</th>
-              <th className="th w-28 text-right">Rate</th>
+              <th className="th w-36 text-right">Qty</th>
+              <th className="th w-32 text-right">Rate</th>
               <th className="th w-28 text-right">Amount</th>
               {editable && <th className="th w-10" />}
             </tr>
@@ -119,6 +122,14 @@ export function LinesEditor({
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
                       <Badge tone={src.tone} className="text-[11px]">{src.label}</Badge>
                       {l.rate_code && !system && <span className="font-mono text-[11px]">{l.rate_code}</span>}
+                      {l.rate_code && checks[l.rate_code] && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200"
+                          title={checks[l.rate_code].join("\n")}
+                        >
+                          <TriangleAlert className="size-3" aria-hidden /> Check
+                        </span>
+                      )}
                       {l.note && <span className="line-clamp-2 max-w-md" title={l.note}>{l.note}</span>}
                     </div>
                   </td>
@@ -126,7 +137,7 @@ export function LinesEditor({
                     {canEdit ? (
                       <div className="relative">
                         <input
-                          className="input h-9 pr-11 text-right num"
+                          className="input h-9 pr-11 text-right num [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           type="number"
                           inputMode="decimal"
                           step="0.01"
@@ -147,15 +158,11 @@ export function LinesEditor({
                     {canEdit ? (
                       <div className="relative">
                         <span className="pointer-events-none absolute left-2.5 top-2 text-sm text-muted">£</span>
-                        <input
+                        <MoneyInput
                           className="input h-9 pl-6 text-right num"
-                          type="number"
-                          inputMode="decimal"
-                          step="0.01"
-                          min="0"
                           aria-label="Rate"
                           value={l.unit_rate}
-                          onChange={(e) => update(i, { unit_rate: Number(e.target.value) })}
+                          onValue={(v) => update(i, { unit_rate: v })}
                         />
                       </div>
                     ) : (
@@ -245,5 +252,32 @@ export function LinesEditor({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A price field that always shows pence (62.00, not 62). While someone is
+ * typing it keeps their text as is; it's tidied to two decimals on blur.
+ */
+function MoneyInput({ value, onValue, ...rest }: { value: number; onValue: (v: number) => void; className?: string; "aria-label"?: string }) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      {...rest}
+      type="text"
+      inputMode="decimal"
+      value={text ?? value.toFixed(2)}
+      onFocus={(e) => {
+        setText(value.toFixed(2));
+        e.currentTarget.select();
+      }}
+      onChange={(e) => {
+        const t = e.target.value.replace(/[^0-9.]/g, "");
+        setText(t);
+        const n = Number(t);
+        if (Number.isFinite(n) && n >= 0) onValue(Math.round(n * 100) / 100);
+      }}
+      onBlur={() => setText(null)}
+    />
   );
 }

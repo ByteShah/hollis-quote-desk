@@ -3,6 +3,7 @@ import { formatGBP } from "@/lib/quote/money";
 import type { Company } from "@/lib/tenant";
 import { cn } from "@/components/ui";
 import { formatDate } from "@/lib/dates";
+import { quoteRef } from "@/lib/quote/number";
 
 // What the customer would receive. Rendered on the server; no client JS.
 // Internal detail (rate codes, AI reasoning, flags) is deliberately left out.
@@ -24,13 +25,13 @@ export function QuotePreview({
   totals,
 }: {
   company: Company;
-  quote: { id: string; summary: string | null; outcome: string; status: string; created_at: string; questions: unknown };
+  quote: { id: string; number: number; summary: string | null; outcome: string; status: string; created_at: string; questions: unknown };
   customer: { name: string; company_name: string | null; address: string | null } | null;
   lines: QuoteLine[];
   exclusions: Exclusion[];
   totals: { subtotal: number; vat: number; total: number };
 }) {
-  const ref = quote.id.slice(0, 8).toUpperCase();
+  const ref = quoteRef(quote.number);
   const questions = quote.questions as string[];
   const draft = quote.status !== "approved";
 
@@ -49,7 +50,7 @@ export function QuotePreview({
         </div>
         <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 text-[13px]">
           <dt className="text-muted">Reference</dt>
-          <dd className="font-mono">Q-{ref}</dd>
+          <dd className="font-mono">{ref}</dd>
           <dt className="text-muted">Date</dt>
           <dd>{formatDate(quote.created_at, "long")}</dd>
         </dl>
